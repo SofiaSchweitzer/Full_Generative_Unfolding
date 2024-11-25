@@ -4,7 +4,7 @@ run_scripts/
 data/
 runfiles/
 results/
-plots/
+Plots/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
