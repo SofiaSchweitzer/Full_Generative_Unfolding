@@ -16,7 +16,7 @@ plt.rcParams['text.latex.preamble'] = r'\usepackage[bitstream-charter]{mathdesig
 
 plt.rcParams["figure.figsize"] = (9,9)
 def plot_naive_unfold(pp, gen, rec, unfolded, name, bins=60,
-               gen_weights=None, unfolded_weights=None, range=None, log=False, unit=None):
+               gen_weights=None, unfolded_weights=None, range=None, log=False, unit=None, density=False):
 
     y_t, bins = np.histogram(gen, bins=bins, range=range, weights=gen_weights)
     y_tr, _ = np.histogram(rec, bins=bins)
@@ -25,8 +25,11 @@ def plot_naive_unfold(pp, gen, rec, unfolded, name, bins=60,
     hists = [y_t, y_g, y_tr]
     hist_errors = [np.sqrt(y_t),  np.sqrt(y_g), np.sqrt(y_tr)]
 
-    integrals = [np.sum((bins[1:] - bins[:-1]) * y) for y in hists]
-    scales = [1 / integral if integral != 0. else 1. for integral in integrals]
+    if density:
+        integrals = [np.sum((bins[1:] - bins[:-1]) * y) for y in hists]
+        scales = [1 / integral if integral != 0. else 1. for integral in integrals]
+    else:
+        scales = [1,1,1]
 
     FONTSIZE = 27
     labels = [r"$\text{gen}|_g$", r"$\text{unfolded}/\delta$", "rec"]
@@ -88,8 +91,8 @@ def plot_naive_unfold(pp, gen, rec, unfolded, name, bins=60,
     #                       fontsize=FONTSIZE)
     axs[1].set_ylabel(r"ratio",
                           fontsize=FONTSIZE)
-    axs[1].set_yticks([0.9,1,1.1])
-    axs[1].set_ylim([0.75, 1.25])
+    axs[1].set_yticks([0.95,1,1.05])
+    axs[1].set_ylim([0.9, 1.1])
     axs[1].axhline(y=1, c="black", ls="--", lw=0.7)
     axs[1].axhline(y=1.1, c="black", ls="dotted", lw=0.5)
     axs[1].axhline(y=0.9, c="black", ls="dotted", lw=0.5)
@@ -197,8 +200,8 @@ def plot_reweighted_distribution(pp, true, fake, reweighted, name, bins=60,
     #                       fontsize=FONTSIZE)
     axs[1].set_ylabel(r"ratio",
                           fontsize=FONTSIZE)
-    axs[1].set_yticks([0.9,1,1.1])
-    axs[1].set_ylim([0.75, 1.25])
+    axs[1].set_yticks([0.95,1,1.05])
+    axs[1].set_ylim([0.9, 1.1])
     axs[1].axhline(y=1, c="black", ls="--", lw=0.7)
     axs[1].axhline(y=1.1, c="black", ls="dotted", lw=0.5)
     axs[1].axhline(y=0.9, c="black", ls="dotted", lw=0.5)
@@ -304,8 +307,8 @@ def plot_prior_unfold(pp, gen, prior, unfolded, name, bins=60,
     #                       fontsize=FONTSIZE)
     axs[1].set_ylabel(r"ratio",
                           fontsize=FONTSIZE)
-    axs[1].set_yticks([0.9,1,1.1])
-    axs[1].set_ylim([0.75, 1.25])
+    axs[1].set_yticks([0.95,1,1.05])
+    axs[1].set_ylim([0.9, 1.1])
     axs[1].axhline(y=1, c="black", ls="--", lw=0.7)
     axs[1].axhline(y=1.1, c="black", ls="dotted", lw=0.5)
     axs[1].axhline(y=0.9, c="black", ls="dotted", lw=0.5)
