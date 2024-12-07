@@ -3,28 +3,63 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 import matplotlib as mpl
 import matplotlib.font_manager as font_manager
-font_dir = ['paper/bitstream-charter-ttf/Charter/']
-for font in font_manager.findSystemFonts(font_dir):
-    font_manager.fontManager.addfont(font)
-mpl.font_manager.findSystemFonts(fontpaths='scipostphys-matplotlib', fontext='ttf')
 
-plt.rcParams["font.family"] = "serif"
-plt.rcParams["font.serif"] = "Charter"
-plt.rcParams["text.usetex"] = True
-plt.rcParams['text.latex.preamble'] = r'\usepackage[bitstream-charter]{mathdesign} \usepackage{amsmath}'
+#None of this exists in the current repo, so replacing
+#font_dir = ['paper/bitstream-charter-ttf/Charter/']
+#for font in font_manager.findSystemFonts(font_dir):
+#    font_manager.fontManager.addfont(font)
+#mpl.font_manager.findSystemFonts(fontpaths='scipostphys-matplotlib', fontext='ttf')
+
+#plt.rcParams["font.family"] = "serif"
+#plt.rcParams["font.serif"] = "Charter"
+#plt.rcParams["text.usetex"] = False
+#plt.rcParams['text.latex.preamble'] = r'\usepackage[bitstream-charter]{mathdesign} \usepackage{amsmath}'
 
 
-plt.rcParams["figure.figsize"] = (9,9)
+def SetStyle():
+    from matplotlib import rc
+
+    import matplotlib as mpl
+    rc('font', family='serif')
+    rc('font', size=22)
+    rc('xtick', labelsize=15)
+    rc('ytick', labelsize=15)
+    rc('legend', fontsize=15)
+
+    # #                                                                                                                                                                                                             
+    mpl.rcParams.update({'font.size': 19})
+    #mpl.rcParams.update({'legend.fontsize': 18})
+    mpl.rcParams['text.usetex'] = False
+    mpl.rcParams.update({'xtick.labelsize': 18})
+    mpl.rcParams.update({'ytick.labelsize': 18})
+    mpl.rcParams.update({'axes.labelsize': 18})
+    mpl.rcParams.update({'legend.frameon': False})
+    mpl.rcParams.update({'lines.linewidth': 2})
+    mpl.rcParams["figure.figsize"] = (9,9)
+    
+    
+def calc_error(weights,bins):    
+    digits = np.digitize(weights, bins)
+    errs = np.asarray([np.linalg.norm(weights[digits==i]) for i in range(1, len(bins))])
+    return errs    
+
+
+def get_histograms_and_errors(bins, range, a, b, c, a_weights=None, b_weights=None, c_weights = None):
+    y_a, bins = np.histogram(a, bins=bins, range=range, weights=a_weights)
+    y_b, _    = np.histogram(b, bins=bins, weights = b_weights)
+    y_c, _    = np.histogram(c, bins=bins, weights = c_weights)
+    hists = [y_a, y_b, y_c]
+    hist_errors = [calc_error(a,bins) if a_weights is not None else np.sqrt(y_a),
+                   calc_error(b,bins) if b_weights is not None else np.sqrt(y_b),
+                   calc_error(c,bins) if c_weights is not None else np.sqrt(y_c)]
+    return hists, hist_errors, bins
+    
+    
 def plot_naive_unfold(pp, gen, rec, unfolded, name, bins=60,
                gen_weights=None, unfolded_weights=None, range=None, log=False, unit=None):
 
-    y_t, bins = np.histogram(gen, bins=bins, range=range, weights=gen_weights)
-    y_tr, _ = np.histogram(rec, bins=bins)
-    y_g, _ = np.histogram(unfolded, bins=bins, weights = unfolded_weights)
-
-    hists = [y_t, y_g, y_tr]
-    hist_errors = [np.sqrt(y_t),  np.sqrt(y_g), np.sqrt(y_tr)]
-
+    hists, hist_errors,bins = get_histograms_and_errors(bins,range, gen, unfolded,rec,
+                                                   gen_weights,unfolded_weights )
     integrals = [np.sum((bins[1:] - bins[:-1]) * y) for y in hists]
     scales = [1 / integral if integral != 0. else 1. for integral in integrals]
 
@@ -117,17 +152,13 @@ def plot_naive_unfold(pp, gen, rec, unfolded, name, bins=60,
 
     plt.savefig(pp, format="pdf", bbox_inches='tight')
     plt.close()
+    
+    
 def plot_reweighted_distribution(pp, true, fake, reweighted, name, bins=60,
                                  labels=None,true_weights=None, fake_weights=None, reweighted_weights=None, range=None, log=False, unit=None, density=False):
 
-    if labels is None:
-        labels = ["true", "fake", "reweighted"]
-    y_t, bins = np.histogram(true, bins=bins, range=range, weights=true_weights)
-    y_tr, _ = np.histogram(fake, bins=bins, weights= fake_weights)
-    y_g, _ = np.histogram(reweighted, bins=bins, weights = reweighted_weights)
-
-    hists = [y_t, y_g, y_tr]
-    hist_errors = [np.sqrt(y_t),  np.sqrt(y_g), np.sqrt(y_tr)]
+        
+    hists, hist_errors, bins = get_histograms_and_errors(bins,range, true, reweighted,fake, true_weights,reweighted_weights,fake_weights)
     dup_last = lambda a: np.append(a, a[-1])
     if density:
         integrals = [np.sum((bins[1:] - bins[:-1]) * y) for y in hists]
@@ -227,16 +258,11 @@ def plot_reweighted_distribution(pp, true, fake, reweighted, name, bins=60,
     plt.savefig(pp, format="pdf", bbox_inches='tight')
     plt.close()
 
-
 def plot_prior_unfold(pp, gen, prior, unfolded, name, bins=60,
                gen_weights=None,prior_weights=None, unfolded_weights=None, range=None, log=False, unit=None, density=False):
 
-    y_t, bins = np.histogram(gen, bins=bins, range=range, weights=gen_weights)
-    y_tr, _ = np.histogram(prior, bins=bins, weights= prior_weights)
-    y_g, _ = np.histogram(unfolded, bins=bins, weights = unfolded_weights)
-
-    hists = [y_t, y_g, y_tr]
-    hist_errors = [np.sqrt(y_t),  np.sqrt(y_g), np.sqrt(y_tr)]
+    hists, hist_errors,bins = get_histograms_and_errors(bins,range, gen, unfolded,prior,
+                                                   gen_weights,unfolded_weights,prior_weights)    
 
     if density:
         integrals = [np.sum((bins[1:] - bins[:-1]) * y) for y in hists]
