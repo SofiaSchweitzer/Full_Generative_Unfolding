@@ -155,10 +155,11 @@ class FlowSubtraction(Model):
         flows = []
         for _ in range(self.params["hidden_layers"]):
             # Neural spline flow with rational quadratic splines
-            flows += [nf.flows.AutoregressiveRationalQuadraticSpline(self.dims_x, 
-                                                                     self.params["hidden_layers"], 
-                                                                     self.params["internal_size"], 
-                                                                     num_context_channels=self.dims_c if self.dims_c > 0 else None)]
+            flows += [nf.flows.MaskedAffineAutoregressive(self.dims_x, 
+                                                          #self.params["hidden_layers"], 
+                                                          self.params["internal_size"], 
+                                                          num_blocks = 1,
+                                                          context_features=self.dims_c if self.dims_c > 0 else None)]
             flows += [nf.flows.LULinearPermute(self.dims_x)]
         
  
@@ -178,8 +179,8 @@ class FlowSubtraction(Model):
         return samples
 
     def batch_loss(self, x, weight, c = None):       
-        bkg_ll = self.background_model.log_prob(x,c)            
-        loss = -torch.mean(((1.0 - self.bkg_fraction)*self.network.log_prob(x,c) + self.bkg_fraction*bkg_ll)*weight.unsqueeze(-1))
+        bkg_p = torch.exp(self.background_model.log_prob(x,c))
+        loss = -torch.mean(torch.log(((1.0 - self.bkg_fraction)*torch.exp(self.network.log_prob(x,c)) + self.bkg_fraction*bkg_p))*weight.unsqueeze(-1))
         return loss
     
     def evaluate(self, data_c=None, num_evts = 0):
@@ -214,16 +215,16 @@ class Flow(Model):
         flows = []
         for _ in range(self.params["hidden_layers"]):
             # Neural spline flow with rational quadratic splines
-            flows += [nf.flows.AutoregressiveRationalQuadraticSpline(self.dims_x, 
-                                                                     self.params["hidden_layers"], 
-                                                                     self.params["internal_size"], 
-                                                                     num_context_channels=self.dims_c if self.dims_c > 0 else None)]
+            flows += [nf.flows.MaskedAffineAutoregressive(self.dims_x, 
+                                                          #self.params["hidden_layers"], 
+                                                          self.params["internal_size"], 
+                                                          num_blocks = 1,
+                                                          context_features=self.dims_c if self.dims_c > 0 else None)]
             flows += [nf.flows.LULinearPermute(self.dims_x)]
         
  
-        self.network = nf.ConditionalNormalizingFlow(base, flows)
+        self.network = nf.ConditionalNormalizingFlow(base, flows) 
         
-
     def sample(self, c = None, num_evts = 0):
         if c is not None:
             batch_size = c.size(0)            
@@ -282,7 +283,7 @@ class CFM(Model):
         x_t = odeint(func=net_wrapper, y0=x_0, t=torch.tensor([0., 1.]).to(device, dtype=dtype))
         return x_t[-1]
 
-    def batch_loss(self, x, c, weight):
+    def batch_loss(self, x, weight, c):
         x_0 = torch.randn((x.size(0), self.dims_x)).to(x.device)
         t = torch.rand((x.size(0), 1)).to(x.device)
         x_t = (1 - t) * x_0 + t * x
