@@ -3,6 +3,60 @@ import torch.nn as nn
 import time
 from torchdiffeq import odeint
 
+class Regressor(nn.Module):
+    def __init__(self, dims_in, params):
+        super().__init__()
+        self.dims_in = dims_in
+        self.params = params
+        self.init_network()
+
+    def init_network(self):
+        layers = []
+        layers.append(nn.Linear(self.dims_in, self.params["internal_size"]))
+        layers.append(nn.ReLU())
+        for _ in range(self.params["hidden_layers"]):
+            layers.append(nn.Linear(self.params["internal_size"], self.params["internal_size"]))
+            layers.append(nn.ReLU())
+        layers.append(nn.Linear(self.params["internal_size"], 1))
+        self.network = nn.Sequential(*layers)
+
+    def batch_loss(self, x, y):
+        pred = self.network(x).squeeze()
+        loss = torch.nn.MSELoss()(pred, y)
+        return loss
+
+    def train_regressor(self, data, value):
+        dataset= torch.utils.data.TensorDataset(data, value)
+        loader = torch.utils.data.DataLoader(dataset, batch_size=self.params["batch_size"],
+                                             shuffle=True)
+        n_epochs = self.params["n_epochs"]
+        lr = self.params["lr"]
+        optimizer = torch.optim.Adam(self.network.parameters(), lr=lr)
+        print(f"Training regressor for {n_epochs} epochs with lr {lr}")
+        t0 = time.time()
+        for epoch in range(n_epochs):
+            losses = []
+            for i, batch in enumerate(loader):
+                x, y = batch
+                optimizer.zero_grad()
+                loss = self.batch_loss(x,y)
+                loss.backward()
+                optimizer.step()
+                losses.append(loss.item())
+            if epoch % int(n_epochs / 5) == 0:
+                print(
+                    f"    Finished epoch {epoch} with average loss {torch.tensor(losses).mean()} after time {round(time.time() - t0, 1)}")
+        print(
+            f"    Finished epoch {epoch} with average loss {torch.tensor(losses).mean()} after time {round(time.time() - t0, 1)}")
+
+    def evaluate(self, data):
+        predictions = []
+        with torch.no_grad():
+            for batch in torch.split(data, self.params["batch_size_sample"]):
+                pred = self.network(batch).squeeze().detach()
+                predictions.append(pred)
+        predictions = torch.cat(predictions)
+        return predictions
 
 class Classifier(nn.Module):
     def __init__(self, dims_in, params):
