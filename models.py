@@ -3,6 +3,7 @@ import torch.nn as nn
 import time
 from torchdiffeq import odeint
 import normflows as nf
+from pytorch_optimizer import Lion
 
 
 
@@ -49,7 +50,9 @@ class Classifier(nn.Module):
             class_weight = 1
         n_epochs = self.params["n_epochs"]* int(class_weight)
         lr = self.params["lr"]
-        optimizer = torch.optim.Adam(self.network.parameters(), lr=lr)
+        optimizer = Lion(self.network.parameters(), lr=lr,weight_decay = 0.1)
+
+        #optimizer = torch.optim.Adam(self.network.parameters(), lr=lr)
         print(f"Training classifier for {n_epochs} epochs with lr {lr}")
         t0 = time.time()
         for epoch in range(n_epochs):
@@ -107,7 +110,8 @@ class Model(nn.Module):
         self.network = self.network.to(data_x.device)
         n_epochs = self.params["n_epochs"]
         lr = self.params["lr"]
-        optimizer = torch.optim.Adam(self.network.parameters(), lr=lr)
+        #optimizer = torch.optim.Adam(self.network.parameters(), lr=lr)
+        optimizer = Lion(self.network.parameters(), lr=lr,weight_decay = 0.1)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, len(loader) * n_epochs)
         print(f"Training generative model for {n_epochs} epochs with lr {lr}")
         t0 = time.time()
