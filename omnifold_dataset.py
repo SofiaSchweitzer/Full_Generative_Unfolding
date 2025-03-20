@@ -9,6 +9,7 @@ class Omnifold:
         self.params = params
 
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.device = "cpu"
         self.init_dataset()
         self.init_observables()
 
@@ -56,8 +57,8 @@ class Omnifold:
         if not reverse:
             dataset = dataset[:, self.params['channels']]
             # add noise to the jet multiplicity to smear out the integer structure
-            dataset[:, 0] = torch.log(dataset[:, 0] + 1.e-4)
-            dataset[:, 6] = torch.log(dataset[:, 6])
+            dataset[:, 0] = (dataset[:, 0] + 1.e-3).log()
+            dataset[:, 6] = (dataset[:, 6]).log()
             noise = torch.rand_like(dataset[:, 1]) - 0.5
             dataset[:, 1] = dataset[:, 1] + noise
             noise = torch.rand(size=dataset[:, 5].shape, device=dataset[:, 5].device)/1000. * 3 + 0.097
@@ -99,11 +100,12 @@ class Omnifold:
             dataset[..., 5] = torch.erf(dataset[..., 5]) * factor + shift
             dataset[..., 5] = dataset[..., 5].exp()
             dataset[..., 5] = torch.where(dataset[..., 5] < 0.1, 0, dataset[..., 5])
-            dataset[..., 0] = torch.exp(dataset[:, 0]) - 1.e-4
-            dataset[..., 6] = torch.exp(dataset[:, 6])
+            dataset[..., 0] = (dataset[..., 0]).exp() - 1.e-3
+            dataset[..., 6] = (dataset[..., 6]).exp()
             # if hasattr(self, "unfolded"):
             #     self.unfolded = self.unfolded * self.gen_std + self.gen_mean
             #     self.unfolded[..., 1] = torch.round(self.unfolded[..., 1])
+
 
         return dataset, mean, std, shift, factor
 
