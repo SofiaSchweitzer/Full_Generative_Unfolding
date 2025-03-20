@@ -16,7 +16,7 @@ plt.rcParams['text.latex.preamble'] = r'\usepackage[bitstream-charter]{mathdesig
 
 plt.rcParams["figure.figsize"] = (9,9)
 def plot_naive_unfold(pp, gen, rec, unfolded, name, bins=60,
-               gen_weights=None, unfolded_weights=None, range=None, log=False, unit=None, density=False):
+               gen_weights=None, unfolded_weights=None, range=None, yscale="linear", unit=None, density=False):
 
     y_t, bins = np.histogram(gen, bins=bins, range=range, weights=gen_weights)
     y_tr, _ = np.histogram(rec, bins=bins)
@@ -81,9 +81,9 @@ def plot_naive_unfold(pp, gen, rec, unfolded, name, bins=60,
         line.set_linewidth(3.0)
     axs[0].set_ylabel("number of events", fontsize=FONTSIZE)
 
-    if "p_{T" in name or log:
-        axs[0].set_yscale("log")
-        axs[0].set_ylim(1.e-5,5.e-2)
+
+    axs[0].set_yscale(yscale)
+
 
 
 
@@ -121,7 +121,7 @@ def plot_naive_unfold(pp, gen, rec, unfolded, name, bins=60,
     plt.savefig(pp, format="pdf", bbox_inches='tight')
     plt.close()
 def plot_reweighted_distribution(pp, true, fake, reweighted, name, bins=60,
-                                 labels=None,true_weights=None, fake_weights=None, reweighted_weights=None, range=None, log=False, unit=None, density=False):
+                                 labels=None,true_weights=None, fake_weights=None, reweighted_weights=None, range=None, yscale="linear", unit=None, density=False):
 
     if labels is None:
         labels = ["true", "fake", "reweighted"]
@@ -190,9 +190,8 @@ def plot_reweighted_distribution(pp, true, fake, reweighted, name, bins=60,
         line.set_linewidth(3.0)
     axs[0].set_ylabel("number of events", fontsize=FONTSIZE)
 
-    if "p_{T" in name or log:
-        axs[0].set_yscale("log")
-        axs[0].set_ylim(1.e-5,5.e-2)
+    axs[0].set_yscale(yscale)
+
 
 
 
@@ -232,7 +231,7 @@ def plot_reweighted_distribution(pp, true, fake, reweighted, name, bins=60,
 
 
 def plot_prior_unfold(pp, gen, prior, unfolded, name, bins=60,
-               gen_weights=None,prior_weights=None, unfolded_weights=None, range=None, log=False, unit=None, density=False):
+               gen_weights=None,prior_weights=None, unfolded_weights=None, range=None, yscale="linear", unit=None, density=False):
 
     y_t, bins = np.histogram(gen, bins=bins, range=range, weights=gen_weights)
     y_tr, _ = np.histogram(prior, bins=bins, weights= prior_weights)
@@ -297,10 +296,8 @@ def plot_prior_unfold(pp, gen, prior, unfolded, name, bins=60,
         line.set_linewidth(3.0)
     axs[0].set_ylabel("number of events", fontsize=FONTSIZE)
 
-    if "p_{T" in name or log:
-        axs[0].set_yscale("log")
-        axs[0].set_ylim(1.e-5,5.e-2)
 
+    axs[0].set_yscale(yscale)
 
 
     # axs[1].set_ylabel(r"$\frac{\mathrm{unfolded}}{\mathrm{gen}}$",
@@ -336,3 +333,51 @@ def plot_prior_unfold(pp, gen, prior, unfolded, name, bins=60,
 
     plt.savefig(pp, format="pdf", bbox_inches='tight')
     plt.close()
+
+def plot_weight_hist(self, file, probability=False):
+    """Plot the weight_histograms for the true and fake data.
+    Args:
+        file: str: path to save the pdf
+        reweighted_weights: bool: if True, the weights will be reweighted
+    """
+    with PdfPages(file) as pdf:
+        bins = np.linspace(0, 3, 50)
+        if probability:
+            bins = np.linspace(0, 1, 50)
+        FONTSIZE = 12
+        hists_true, bins = np.histogram(self.weights_true, bins=bins)
+        hists_fake, _ = np.histogram(self.weights_fake, bins=bins)
+
+        if probability:
+            hists_true, bins = np.histogram(self.y_true, bins=bins)
+            hists_fake, _ = np.histogram(self.y_fake, bins=bins)
+
+        hists = [hists_true, hists_fake]
+        colors = ["black", "#A52A2A"]
+        labels = ["truth", "didi"]
+
+        integrals = [np.sum((bins[1:] - bins[:-1]) * y) for y in hists]
+        scales = [1 / integral if integral != 0. else 1. for integral in integrals]
+
+        fig, ax = plt.subplots(figsize=(4, 3.5))
+        fig.tight_layout(pad=0.0, w_pad=0.0, h_pad=0.0, rect=(0.11, 0.09, 1.00, 1.00))
+
+        for i, (hist, color, scale) in enumerate(zip(hists, colors, scales)):
+            ax.step(bins[1:], hist * scale, label=labels[i], color=color, linewidth=1.0, where="post")
+            # ax.fill_between(bins[1:], hist * scale, step="post", color=color, alpha=0.3, label = labels[i])
+
+        ax.set_yscale("log")
+        # ax.set_xscale("log")
+        if probability:
+            ax.set_xlabel(r"$p(event = true)$", fontsize=FONTSIZE)
+            ax.set_xlim(0, 1)
+        else:
+            ax.set_xlabel("$w(x)$", fontsize=FONTSIZE)
+            ax.set_xlim(0, 3)
+        ax.set_ylabel("a.u.", fontsize=FONTSIZE)
+
+        ax.legend(frameon=False, fontsize=FONTSIZE)
+
+        plt.savefig(pdf, format="pdf", bbox_inches="tight", pad_inches=0.05)
+        plt.close()
+

@@ -101,7 +101,13 @@ class Classifier(nn.Module):
         n_epochs = self.params["n_epochs"]* int(class_weight)
         lr = self.params["lr"]
         optimizer = torch.optim.Adam(self.network.parameters(), lr=lr)
+        n_batches = min(len(loader_true), len(loader_false))
         print(f"Training classifier for {n_epochs} epochs with lr {lr}")
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(
+            optimizer=optimizer,
+            max_lr=self.params.get("max_lr", 3 * self.params["lr"]),
+            epochs=n_epochs,
+            steps_per_epoch=n_batches)
         t0 = time.time()
         for epoch in range(n_epochs):
             losses = []
@@ -115,6 +121,7 @@ class Classifier(nn.Module):
                 loss += self.batch_loss(x_false, label_false, weight_false)
                 loss.backward()
                 optimizer.step()
+                scheduler.step()
                 losses.append(loss.item())
             if epoch % int(n_epochs / 5) == 0:
                 print(f"    Finished epoch {epoch} with average loss {torch.tensor(losses).mean()} after time {round(time.time() - t0, 1)}")
