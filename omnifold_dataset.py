@@ -9,7 +9,6 @@ class Omnifold:
         self.params = params
 
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.device = "cpu"
         self.init_dataset()
         self.init_observables()
 
@@ -30,9 +29,9 @@ class Omnifold:
 
         self.data_gen = torch.tensor(data_gen).float()#.to(self.device)
         self.data_signal_rec = torch.tensor(data_rec).float()#.to(self.device)
-        self.data_rec = self.data_signal_rec
+        # self.data_rec = self.data_signal_rec
         self.mc_bkg, self.data_bkg = torch.chunk(torch.tensor(bkg).float(),2)#.to(self.device),2)
-        # self.data_rec = torch.cat([self.data_signal_rec, self.data_bkg])
+        self.data_rec = torch.cat([self.data_signal_rec, self.data_bkg])
         #
         # self.data_rec = self.data_rec[self.data_rec[:,0] < 70]
         # self.mc_bkg = self.mc_bkg[self.mc_bkg[:, 0] < 70]
@@ -58,7 +57,7 @@ class Omnifold:
             dataset = dataset[:, self.params['channels']]
             # add noise to the jet multiplicity to smear out the integer structure
             dataset[:, 0] = (dataset[:, 0] + 1.e-3).log()
-            dataset[:, 6] = (dataset[:, 6]).log()
+            dataset[:, 6] = (dataset[:, 6] - 11.6).log()
             noise = torch.rand_like(dataset[:, 1]) - 0.5
             dataset[:, 1] = dataset[:, 1] + noise
             noise = torch.rand(size=dataset[:, 5].shape, device=dataset[:, 5].device)/1000. * 3 + 0.097
@@ -101,7 +100,7 @@ class Omnifold:
             dataset[..., 5] = dataset[..., 5].exp()
             dataset[..., 5] = torch.where(dataset[..., 5] < 0.1, 0, dataset[..., 5])
             dataset[..., 0] = (dataset[..., 0]).exp() - 1.e-3
-            dataset[..., 6] = (dataset[..., 6]).exp()
+            dataset[..., 6] = (dataset[..., 6]).exp() + 11.6
             # if hasattr(self, "unfolded"):
             #     self.unfolded = self.unfolded * self.gen_std + self.gen_mean
             #     self.unfolded[..., 1] = torch.round(self.unfolded[..., 1])
@@ -114,7 +113,7 @@ class Omnifold:
 
         self.observables.append({
             "tex_label": r"\text{Jet mass } m",
-            "bins": torch.linspace(1, 90, 50 + 1),
+            "bins": torch.linspace(1, 60, 45 + 1),
             "yscale": "linear"
         })
         self.observables.append({
@@ -124,27 +123,29 @@ class Omnifold:
         })
         self.observables.append({
             "tex_label": r"\text{Jet width } w",
-            "bins": torch.linspace(0, 0.6, 50 + 1),
+            "bins": torch.linspace(0, 0.6, 45 + 1),
             "yscale": "log"
         })
         self.observables.append({
             "tex_label": r"\text{Groomed mass }\log \rho",
-            "bins": torch.linspace(-14, -2, 50 + 1),
+            "bins": torch.linspace(-13, -2, 45 + 1),
             "yscale": "linear"
         })
         self.observables.append({
             "tex_label": r"\text{N-subjettiness ratio } \tau_{21}",
-            "bins": torch.linspace(0.1, 1.1, 50 + 1),
+            "bins": torch.linspace(0.1, 1.1, 45 + 1),
             "yscale": "linear"
         })
         self.observables.append({
             "tex_label": r"\text{Groomed momentum fraction }z_g",
-            "bins": torch.linspace(0.05, 0.55, 50 + 1),
+            "bins": torch.linspace(0.05, 0.55, 45 + 1),
             "yscale": "log"
         })
         self.observables.append({
             "tex_label": r"\text{Jet transverse momentum }p_T",
-            "bins": torch.linspace(50, 500, 50 + 1),
+            "bins": torch.linspace(50, 500, 45 + 1),
             "yscale": "log"
         })
+
+        # self.observables = self.observables[:6]
 

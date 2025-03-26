@@ -2,7 +2,9 @@ import torch
 import torch.nn as nn
 import time
 from torchdiffeq import odeint
+import logging
 
+import os
 class Regressor(nn.Module):
     def __init__(self, dims_in, params):
         super().__init__()
@@ -32,7 +34,7 @@ class Regressor(nn.Module):
         n_epochs = self.params["n_epochs"]
         lr = self.params["lr"]
         optimizer = torch.optim.Adam(self.network.parameters(), lr=lr)
-        print(f"Training regressor for {n_epochs} epochs with lr {lr}")
+        logging.info(f"Training regressor for {n_epochs} epochs with lr {lr}")
         t0 = time.time()
         for epoch in range(n_epochs):
             losses = []
@@ -44,9 +46,9 @@ class Regressor(nn.Module):
                 optimizer.step()
                 losses.append(loss.item())
             if epoch % int(n_epochs / 5) == 0:
-                print(
+                logging.info(
                     f"    Finished epoch {epoch} with average loss {torch.tensor(losses).mean()} after time {round(time.time() - t0, 1)}")
-        print(
+        logging.info(
             f"    Finished epoch {epoch} with average loss {torch.tensor(losses).mean()} after time {round(time.time() - t0, 1)}")
 
     def evaluate(self, data):
@@ -59,12 +61,13 @@ class Regressor(nn.Module):
         return predictions
 
 class Classifier(nn.Module):
-    def __init__(self, dims_in, params):
+    def __init__(self, dims_in, params, logger, model_name):
         super().__init__()
         self.dims_in = dims_in
         self.params = params
         self.init_network()
-
+        self.logger = logger
+        self.model_name = model_name
     def init_network(self):
         layers = []
         layers.append(nn.Linear(self.dims_in, self.params["internal_size"]))
@@ -95,20 +98,21 @@ class Classifier(nn.Module):
 
         if not balanced:
             class_weight = len(data_true)/len(data_false)
-            print(f"    Training with unbalanced training set with weight {class_weight}")
+            logging.info(f"    Training with unbalanced training set with weight {class_weight}")
         else:
             class_weight = 1
         n_epochs = self.params["n_epochs"]* int(class_weight)
         lr = self.params["lr"]
         optimizer = torch.optim.Adam(self.network.parameters(), lr=lr)
         n_batches = min(len(loader_true), len(loader_false))
-        print(f"Training classifier for {n_epochs} epochs with lr {lr}")
+        logging.info(f"Training classifier for {n_epochs} epochs with lr {lr}")
         scheduler = torch.optim.lr_scheduler.OneCycleLR(
             optimizer=optimizer,
             max_lr=self.params.get("max_lr", 3 * self.params["lr"]),
             epochs=n_epochs,
             steps_per_epoch=n_batches)
         t0 = time.time()
+
         for epoch in range(n_epochs):
             losses = []
             for i, (batch_true, batch_false) in enumerate(zip(loader_true, loader_false)):
@@ -123,9 +127,14 @@ class Classifier(nn.Module):
                 optimizer.step()
                 scheduler.step()
                 losses.append(loss.item())
+                self.logger.add_scalar(f"{self.model_name}/train_losses", losses[-1], epoch * len(loader_true) + i)
+                self.logger.add_scalar(f"{self.model_name}/learning_rate", scheduler.get_last_lr()[0],
+                                       len(loader_true) * epoch + i)
             if epoch % int(n_epochs / 5) == 0:
-                print(f"    Finished epoch {epoch} with average loss {torch.tensor(losses).mean()} after time {round(time.time() - t0, 1)}")
-        print(f"    Finished epoch {epoch} with average loss {torch.tensor(losses).mean()} after time {round(time.time() - t0, 1)}")
+                logging.info(f"    Finished epoch {epoch} with average loss {torch.tensor(losses).mean()} after time {round(time.time() - t0, 1)}")
+
+            self.logger.add_scalar(f"{self.model_name}/train_losses_epoch", torch.tensor(losses).mean(), epoch)
+        logging.info(f"    Finished epoch {epoch} with average loss {torch.tensor(losses).mean()} after time {round(time.time() - t0, 1)}")
 
     def evaluate(self, data, return_weights=True):
         predictions = []
@@ -141,7 +150,7 @@ class Model(nn.Module):
 
     def __init__(self):
         super().__init__()
-
+        self.epochs = 0
     def init_network(self):
         layers = []
         layers.append(nn.Linear(self.dims_in, self.params["internal_size"]))
@@ -162,7 +171,7 @@ class Model(nn.Module):
         lr = self.params["lr"]
         optimizer = torch.optim.Adam(self.network.parameters(), lr=lr)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, len(loader) * n_epochs)
-        print(f"Training CFM for {n_epochs} epochs with lr {lr}")
+        logging.info(f"Training CFM for {n_epochs} epochs with lr {lr}")
         t0 = time.time()
         for epoch in range(n_epochs):
             losses = []
@@ -174,10 +183,15 @@ class Model(nn.Module):
                 optimizer.step()
                 scheduler.step()
                 losses.append(loss.item())
+                self.logger.add_scalar(f"unfolder/train_losses", losses[-1], self.epochs * len(loader) + i)
+                self.logger.add_scalar(f"unfolder/learning_rate", scheduler.get_last_lr()[0],
+                                       len(loader) * self.epochs + i)
             if epoch % int(n_epochs / 5) == 0:
-                print(
+                logging.info(
                     f"    Finished epoch {epoch} with average loss {torch.tensor(losses).mean()} after time {round(time.time() - t0, 1)}")
-        print(
+            self.logger.add_scalar(f"unfolder/train_losses_epoch", torch.tensor(losses).mean(), self.epochs)
+            self.epochs += 1
+        logging.info(
             f"    Finished epoch {epoch} with average loss {torch.tensor(losses).mean()} after time {round(time.time() - t0, 1)}")
 
     def evaluate(self, data_c):
@@ -191,14 +205,14 @@ class Model(nn.Module):
 
 
 class CFM(Model):
-    def __init__(self, dims_x, dims_c, params):
+    def __init__(self, dims_x, dims_c, params, logger):
         super().__init__()
         self.dims_x = dims_x
         self.dims_c = dims_c
         self.params = params
         self.dims_in = self.dims_x + self.dims_c + 1
         self.init_network()
-
+        self.logger = logger
     def sample(self, c):
         batch_size = c.size(0)
         dtype = c.dtype
