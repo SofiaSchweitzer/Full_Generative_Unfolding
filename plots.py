@@ -19,7 +19,7 @@ def plot_naive_unfold(pp, gen, rec, unfolded, name, bins=60,
                gen_weights=None, unfolded_weights=None, range=None, yscale="linear", unit=None, density=False):
 
     y_t, bins = np.histogram(gen, bins=bins, range=range, weights=gen_weights)
-    y_tr, _ = np.histogram(rec, bins=bins)
+    y_tr, _ = np.histogram(rec, bins=bins, weights=gen_weights)
     y_g, _ = np.histogram(unfolded, bins=bins, weights = unfolded_weights)
 
     hists = [y_t, y_g, y_tr]
@@ -91,11 +91,11 @@ def plot_naive_unfold(pp, gen, rec, unfolded, name, bins=60,
     #                       fontsize=FONTSIZE)
     axs[1].set_ylabel(r"ratio",
                           fontsize=FONTSIZE)
-    axs[1].set_yticks([0.95,1,1.05])
-    axs[1].set_ylim([0.9, 1.1])
+    axs[1].set_yticks([0.8,1,1.2])
+    axs[1].set_ylim([0.7, 1.3])
     axs[1].axhline(y=1, c="black", ls="--", lw=0.7)
-    axs[1].axhline(y=1.1, c="black", ls="dotted", lw=0.5)
-    axs[1].axhline(y=0.9, c="black", ls="dotted", lw=0.5)
+    axs[1].axhline(y=1.2, c="black", ls="dotted", lw=0.5)
+    axs[1].axhline(y=0.8, c="black", ls="dotted", lw=0.5)
 
     if range:
         plt.xlim((range[0]+0.1,range[1]-0.1))
@@ -199,11 +199,11 @@ def plot_reweighted_distribution(pp, true, fake, reweighted, name, bins=60,
     #                       fontsize=FONTSIZE)
     axs[1].set_ylabel(r"ratio",
                           fontsize=FONTSIZE)
-    axs[1].set_yticks([0.95,1,1.05])
-    axs[1].set_ylim([0.9, 1.1])
+    axs[1].set_yticks([0.8,1,1.2])
+    axs[1].set_ylim([0.7, 1.3])
     axs[1].axhline(y=1, c="black", ls="--", lw=0.7)
-    axs[1].axhline(y=1.1, c="black", ls="dotted", lw=0.5)
-    axs[1].axhline(y=0.9, c="black", ls="dotted", lw=0.5)
+    axs[1].axhline(y=1.2, c="black", ls="dotted", lw=0.5)
+    axs[1].axhline(y=0.8, c="black", ls="dotted", lw=0.5)
 
     if range:
         plt.xlim((range[0]+0.1,range[1]-0.1))
@@ -304,11 +304,11 @@ def plot_prior_unfold(pp, gen, prior, unfolded, name, bins=60,
     #                       fontsize=FONTSIZE)
     axs[1].set_ylabel(r"ratio",
                           fontsize=FONTSIZE)
-    axs[1].set_yticks([0.95,1,1.05])
-    axs[1].set_ylim([0.9, 1.1])
+    axs[1].set_yticks([0.8,1,1.2])
+    axs[1].set_ylim([0.7, 1.3])
     axs[1].axhline(y=1, c="black", ls="--", lw=0.7)
-    axs[1].axhline(y=1.1, c="black", ls="dotted", lw=0.5)
-    axs[1].axhline(y=0.9, c="black", ls="dotted", lw=0.5)
+    axs[1].axhline(y=1.2, c="black", ls="dotted", lw=0.5)
+    axs[1].axhline(y=0.8, c="black", ls="dotted", lw=0.5)
 
     if range:
         plt.xlim((range[0]+0.1,range[1]-0.1))
