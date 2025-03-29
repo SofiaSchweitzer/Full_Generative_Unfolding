@@ -13,14 +13,25 @@ from models import CFM
 from models import Classifier
 from omnifold_dataset import Omnifold
 from plots import plot_naive_unfold, plot_reweighted_distribution, plot_prior_unfold
-
+import sys
 def setup_logging(run_dir):
     log_file = os.path.join(run_dir, "run.log")
     logging.basicConfig(
         level=logging.INFO,
-        format="%(levelname)s: %(message)s",  # Clean format without timestamp
-        handlers=[logging.FileHandler(log_file), logging.StreamHandler()]
+        format="%(levelname)s - %(message)s",
+        handlers=[
+            logging.FileHandler(log_file),  # Log to a file
+            logging.StreamHandler()  # Log to the console
+        ]
     )
+    def log_uncaught_exceptions(exc_type, exc_value, exc_traceback):
+        logging.critical("Uncaught exception", exc_info=(exc_type, exc_value, exc_traceback))
+
+    sys.excepthook = log_uncaught_exceptions
+    logging.getLogger("lightning_fabric.plugins.environments.slurm").setLevel(logging.ERROR)
+    logging.getLogger("pytorch_lightning").setLevel(logging.WARNING)
+    logging.getLogger("lightning").setLevel(logging.WARNING)
+    logging.getLogger("torch").setLevel(logging.WARNING)
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('path')
@@ -79,7 +90,7 @@ def main():
         background_weights = background_weights * (len(
         data.data_rec[data.data_rec_mask.bool()]) - len(data.mc_bkg[data.mc_bkg_mask]))/ background_weights.sum()
     else:
-        data.data_rec = data.data_signal_rec
+        data.data_rec = data.data_rec[:len(data.data_signal_rec)]
         data.data_rec_mask = data.data_rec_mask[:len(data.data_rec)]
         background_weights = torch.ones_like(data.data_rec[data.data_rec_mask.bool()][:,0])
     # #Iterative unfolder
@@ -89,6 +100,7 @@ def main():
 
     for j in range(iterative_unfolding_params["iterations"]):
         logging.info(f"Starting with the {j}.iteration.")
+
         if j == 0:
             logging.info("Initalize unfolder")
             unfolder = CFM(dim, dim, iterative_unfolding_params["generator"], logger).to(data.device)
@@ -99,11 +111,11 @@ def main():
             mc_weights = torch.ones_like(mc_rec[:, 0])
             data_weights = background_weights
         if j > 0:
-            iterative_classifier = Classifier(dim-1, iterative_unfolding_params["classifier"],logger, f"iterative_{j}").to(data.device)
+            iterative_classifier = Classifier(dim, iterative_unfolding_params["classifier"],logger, f"iterative_{j}").to(data.device)
             logging.info("iterator has", sum(p.numel() for p in iterative_classifier.parameters()),
                   "trainable parameters.")
-            iterative_classifier.train_classifier(data_unfold[:,:6], mc_gen[:,:6], data_weights, mc_weights)
-            mc_weights *= iterative_classifier.evaluate(mc_gen[:,:6])
+            iterative_classifier.train_classifier(data_unfold, mc_gen, data_weights, mc_weights)
+            mc_weights *= iterative_classifier.evaluate(mc_gen)
             #plot histograms
             plt.figure()
             plt.hist(mc_weights.cpu(), bins=50, label='data_rec')
@@ -114,12 +126,12 @@ def main():
             plt.savefig(os.path.join(plot_path, f"classifier_histograms_{j}.pdf"))
             plt.close()
             with PdfPages(f"{plot_path}/prior_dependence_reweighting_{j}.pdf") as out:
-                for i, observable in enumerate(data.observables):
-                    plot_prior_unfold(out,  data_unfold_inter[:, i], data.mc_gen_inter[:, i][(data.mc_rec_mask.bool())],
-                                      data.mc_gen_inter[:, i][(data.mc_rec_mask.bool())],
+                for channel in params["channels"]:
+                    plot_prior_unfold(out,  data_unfold_inter[:, channel], data.mc_gen_inter[:, channel][(data.mc_rec_mask.bool())],
+                                      data.mc_gen_inter[:, channel][(data.mc_rec_mask.bool())],
                                       prior_weights=mc_weights.cpu(),
-                                      bins=observable["bins"], name=observable["tex_label"],
-                                      yscale=observable["yscale"],
+                                      bins=data.observables[channel]["bins"], name=data.observables[channel]["tex_label"],
+                                      yscale=data.observables[channel]["yscale"],
                                       density=True)
         unfolder.train_unfolder(mc_gen, mc_rec, mc_weights)
         logging.info("unfold data")
@@ -134,16 +146,18 @@ def main():
             mc_unfold, _, _, _, _ = data.apply_preprocessing(mc_unfold,
                                                                      parameters=[data.mean, data.std, data.shift,
                                                                                  data.factor], reverse=True)
-            for i, observable in enumerate(data.observables):
-                plot_prior_unfold(out, data.data_gen[:, i][data.data_rec_mask[:len(data.data_signal_rec)].bool()],
-                                  data.mc_gen_inter[:, i][(data.mc_rec_mask.bool())], data_unfold_inter[:, i],
+            for channel in params["channels"]:
+                plot_prior_unfold(out, data.data_gen[:, channel][data.data_rec_mask[:len(data.data_signal_rec)].bool()],
+                                  data.mc_gen_inter[:, channel][(data.mc_rec_mask.bool())], data_unfold_inter[:, channel],
                                   unfolded_weights=background_weights.cpu(), prior_weights=mc_weights.cpu(),
-                                  bins=observable["bins"], name=observable["tex_label"], yscale=observable["yscale"],
+                                  bins=data.observables[channel]["bins"], name=data.observables[channel]["tex_label"],
+                                  yscale=data.observables[channel]["yscale"],
                                   density=True)
-                plot_naive_unfold(out, data.mc_gen_inter[:, i][(data.mc_rec_mask.bool())],
-                                  data.mc_rec_inter[:, i][(data.mc_rec_mask.bool())], mc_unfold[:, i],
-                                  gen_weights=mc_weights.cpu(),
-                                  bins=observable["bins"], name=observable["tex_label"], yscale=observable["yscale"],
+                plot_naive_unfold(out, data.mc_gen_inter[:, channel][(data.mc_rec_mask.bool())],
+                                  data.mc_rec_inter[:, channel][(data.mc_rec_mask.bool())], mc_unfold[:, channel],
+                                  gen_weights=mc_weights.cpu(), unfolded_weights=mc_weights.cpu(),
+                                  bins=data.observables[channel]["bins"], name=data.observables[channel]["tex_label"],
+                                  yscale=data.observables[channel]["yscale"],
                                   density=True)
     #
     iterator_path = os.path.join(run_dir, "models", f"iterator.pt")
@@ -178,41 +192,44 @@ def main():
 
 
     with PdfPages(f"{plot_path}/background_suppression.pdf") as out:
-        for i, observable in enumerate(data.observables):
-            plot_reweighted_distribution(out, data.data_signal_rec[:, i][data.data_rec_mask[:len(data.data_signal_rec)].bool()],
-                                     data.data_rec[:, i][data.data_rec_mask.bool()],
-                                     data.data_rec[:, i][data.data_rec_mask.bool()],
+        for channel in params["channels"]:
+            plot_reweighted_distribution(out, data.data_signal_rec[:, channel][data.data_rec_mask[:len(data.data_signal_rec)].bool()],
+                                     data.data_rec[:, channel][data.data_rec_mask.bool()],
+                                     data.data_rec[:, channel][data.data_rec_mask.bool()],
                                      reweighted_weights=background_weights.cpu(),
-                                     bins=observable["bins"], labels=[r"$\text{signal} |_r$", "reweighted", "data $(s+b)|_r$"],
-                                     name=observable["tex_label"], yscale=observable["yscale"])
+                                     bins=data.observables[channel]["bins"], labels=[r"$\text{signal} |_r$", "reweighted", "data $(s+b)|_r$"],
+                                     name=data.observables[channel]["tex_label"], yscale=data.observables[channel]["yscale"])
 
 
     # %%
     with PdfPages(f"{plot_path}/prior_dependence_final.pdf") as out:
-        for i, observable in enumerate(data.observables):
-            plot_prior_unfold(out, data.data_gen[:, i][data.data_rec_mask[:len(data.data_signal_rec)].bool()],
-                              data.mc_gen[:, i][(data.mc_rec_mask.bool())], data_unfold[:, i],
+        for channel in params["channels"]:
+            plot_prior_unfold(out, data.data_gen[:, channel][data.data_rec_mask[:len(data.data_signal_rec)].bool()],
+                              data.mc_gen[:, channel][(data.mc_rec_mask.bool())], data_unfold[:, channel],
                             unfolded_weights=background_weights.cpu(),
-                              bins=observable["bins"], name=observable["tex_label"],yscale=observable["yscale"])
+                              bins=data.observables[channel]["bins"], name=data.observables[channel]["tex_label"],
+                              yscale=data.observables[channel]["yscale"])
 
     with PdfPages(f"{plot_path}/efficiency_effects.pdf") as out:
-        for i, observable in enumerate(data.observables):
-            plot_reweighted_distribution(out, data.data_gen[:, i],
-                                         data_unfold[:, i],
-                                         data_unfold[:, i],
+        for channel in params["channels"]:
+            plot_reweighted_distribution(out, data.data_gen[:, channel],
+                                         data_unfold[:, channel],
+                                         data_unfold[:, channel],
                                          reweighted_weights=data_weights.cpu(),
                                          fake_weights=background_weights.cpu(),
-                                         bins=observable["bins"],
+                                         bins=data.observables[channel]["bins"],
                                          labels=[r"$\text{gen}|_g$", r"$\text{unfolded} / \delta$", "unfolded"],
-                                         name=observable["tex_label"],yscale=observable["yscale"])
+                                         name=data.observables[channel]["tex_label"],
+                                         yscale=data.observables[channel]["yscale"])
 
     with PdfPages(f"{plot_path}/final_unfolding.pdf") as out:
-        for i, observable in enumerate(data.observables):
-            plot_naive_unfold(out, data.data_gen[:, i][data.data_gen_mask.bool()],
-                              data.data_rec[(data.data_rec_mask.bool())][:, i],
-                              data_unfold[:, i][unfolded_mask],
+        for channel in params["channels"]:
+            plot_naive_unfold(out, data.data_gen[:, channel][data.data_gen_mask.bool()],
+                              data.data_rec[(data.data_rec_mask.bool())][:, channel],
+                              data_unfold[:, channel][unfolded_mask],
                               unfolded_weights=data_weights.cpu()[unfolded_mask],
-                              bins=observable["bins"], name=observable["tex_label"],yscale=observable["yscale"])
+                              bins=data.observables[channel]["bins"],
+                              name=data.observables[channel]["tex_label"],yscale=data.observables[channel]["yscale"])
 
     # plot histograms
     # plt.figure()
