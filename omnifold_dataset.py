@@ -54,15 +54,18 @@ class Omnifold:
 
     def apply_preprocessing(self,dataset, parameters=None,reverse=False):
         if not reverse:
-            dataset = dataset[:, self.params['channels']]
+
             # add noise to the jet multiplicity to smear out the integer structure
             dataset[:, 0] = (dataset[:, 0] + 1.e-3).log()
             dataset[:, 6] = (dataset[:, 6] - 11.6).log()
+            # dataset[:, 0] = (dataset[:, 0] + 10).log()
+            # dataset[:, 6] = (dataset[:, 6] - 5).log()
             noise = torch.rand_like(dataset[:, 1]) - 0.5
             dataset[:, 1] = dataset[:, 1] + noise
             noise = torch.rand(size=dataset[:, 5].shape, device=dataset[:, 5].device)/1000. * 3 + 0.097
             dataset[:, 5] = torch.where(dataset[:, 5] < 0.1, noise, dataset[:, 5])
             dataset[:, 5] = dataset[:, 5].log()
+
             try:
                 shift = parameters[2]
             except:
@@ -74,7 +77,7 @@ class Omnifold:
                 factor = max(dataset[:, 5].max(), -1 * dataset[:, 5].min())*1.001
             dataset[:, 5] = dataset[:, 5]/factor
             dataset[:, 5] = torch.erfinv(dataset[:, 5])
-
+            dataset = dataset[:, self.params['channels']]
             # standardize events
             try:
                 mean = parameters[0]
@@ -93,6 +96,9 @@ class Omnifold:
             shift = parameters[2]
             factor = parameters[3]
             dataset = dataset.cpu() * std + mean
+            zeros = torch.zeros((len(dataset), 7))
+            zeros[:, self.params['channels']] = dataset
+            dataset = zeros
             # round jet multiplicity back to integers
             dataset[..., 1] = torch.round(dataset[..., 1])
 
@@ -101,6 +107,8 @@ class Omnifold:
             dataset[..., 5] = torch.where(dataset[..., 5] < 0.1, 0, dataset[..., 5])
             dataset[..., 0] = (dataset[..., 0]).exp() - 1.e-3
             dataset[..., 6] = (dataset[..., 6]).exp() + 11.6
+            # dataset[..., 0] = (dataset[..., 0]).exp() - 10
+            # dataset[..., 6] = (dataset[..., 6]).exp() + 5
             # if hasattr(self, "unfolded"):
             #     self.unfolded = self.unfolded * self.gen_std + self.gen_mean
             #     self.unfolded[..., 1] = torch.round(self.unfolded[..., 1])
@@ -147,5 +155,5 @@ class Omnifold:
             "yscale": "log"
         })
 
-        # self.observables = self.observables[:6]
+
 
