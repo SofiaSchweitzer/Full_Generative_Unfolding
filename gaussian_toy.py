@@ -41,33 +41,42 @@ class GaussianToy:
             self.data_rec = self.data_signal_rec
 
         if self.params["mc_rec_cut"]:
-            # cut_position = self.params["mc_rec_cut_position"]
-            # self.mc_rec_mask = ~((self.mc_rec > cut_position[0]).squeeze() * (self.mc_rec < cut_position[1]).squeeze())
-            self.mc_rec_mask = self.apply_efficiency_acceptance_effects(self.mc_rec, self.params["acceptance"])
-            self.mc_rec[~self.mc_rec_mask.bool()] = self.params["empty_value"]*torch.ones_like(self.mc_rec[~self.mc_rec_mask.bool()])
+            try:
+                cut_position = self.params["rec_cut_position"]
+                self.mc_rec_mask = ~((self.mc_rec > cut_position).squeeze())
+                self.mc_background_mask = ~((self.mc_background_rec > cut_position).squeeze())
+            except:
+                self.mc_rec_mask = self.apply_efficiency_acceptance_effects(self.mc_rec, self.params["efficiency"])
+
             # self.mc_rec = self.mc_rec[self.mc_rec_mask]
             # self.mc_gen = self.mc_gen[self.mc_rec_mask]
 
         if self.params["mc_gen_cut"]:
-            # cut_position = self.params["mc_gen_cut_position"]
-            # self.mc_gen_mask = ~((self.mc_gen > cut_position[0]).squeeze() * (self.mc_gen < cut_position[1]).squeeze())
-            self.mc_gen_mask = self.apply_efficiency_acceptance_effects(self.mc_gen, self.params["efficiency"])
-            self.mc_gen[~self.mc_gen_mask.bool()] = self.params["empty_value"]*torch.ones_like(self.mc_gen[~self.mc_gen_mask.bool()])
+            try:
+                cut_position = self.params["gen_cut_position"]
+                self.mc_gen_mask = ~((self.mc_gen > cut_position).squeeze())
+            except:
+                self.mc_gen_mask = self.apply_efficiency_acceptance_effects(self.mc_gen, self.params["acceptance"])
+
             # self.mc_rec = self.mc_rec[self.mc_gen_mask]
             # self.mc_gen = self.mc_gen[self.mc_gen_mask]
 
         if self.params["data_rec_cut"]:
-            # cut_position = self.params["data_rec_cut_position"]
-            # self.data_rec_mask = ~((self.data_rec > cut_position[0]).squeeze() * (self.data_rec < cut_position[1]).squeeze())
-            self.data_rec_mask = self.apply_efficiency_acceptance_effects(self.data_rec, self.params["acceptance"])
-            self.data_rec[~self.data_rec_mask.bool()] = self.params["empty_value"]*torch.ones_like(self.data_rec[~self.data_rec_mask.bool()])
+            try:
+                cut_position = self.params["rec_cut_position"]
+                self.data_rec_mask = ~((self.data_rec > cut_position).squeeze())
+            except:
+                self.data_rec_mask = self.apply_efficiency_acceptance_effects(self.data_rec, self.params["efficiency"])
+
             # self.data_rec = self.data_rec[self.data_rec_mask]
             # self.data_gen = self.data_gen[self.data_rec_mask]
 
         if self.params["data_gen_cut"]:
-            # cut_position = self.params["data_gen_cut_position"]
-            # self.data_gen_mask = ~((self.data_gen > cut_position[0]).squeeze() * (self.data_gen < cut_position[1]).squeeze())
-            self.data_gen_mask = self.apply_efficiency_acceptance_effects(self.data_gen, self.params["efficiency"])
-            self.data_gen[~self.data_gen_mask.bool()] = self.params["empty_value"]*torch.ones_like(self.data_gen[~self.data_gen_mask.bool()])
+            try:
+                cut_position = self.params["gen_cut_position"]
+                self.data_gen_mask = ~((self.data_gen > cut_position).squeeze())
+            except:
+                self.data_gen_mask = self.apply_efficiency_acceptance_effects(self.data_gen, self.params["acceptance"])
+
             # self.data_rec = self.data_rec[self.data_gen_mask]
             # self.data_gen = self.data_gen[self.data_gen_mask]
