@@ -2,12 +2,11 @@ import torch
 import torch.nn as nn
 import time
 from torchdiffeq import odeint
-
+import math
 import normflows as nf
 from pytorch_optimizer import Lion
 
 import logging
-
 
 import os
 class Regressor(nn.Module):
@@ -76,10 +75,10 @@ class Classifier(nn.Module):
     def init_network(self):
         layers = []
         layers.append(nn.Linear(self.dims_in, self.params["internal_size"]))
-        layers.append(nn.ReLU())
+        layers.append(nn.LeakyReLU())
         for _ in range(self.params["hidden_layers"]):
             layers.append(nn.Linear(self.params["internal_size"], self.params["internal_size"]))
-            layers.append(nn.ReLU())
+            layers.append(nn.LeakyReLU())
         layers.append(nn.Linear(self.params["internal_size"], 1))
         self.network = nn.Sequential(*layers)
 
@@ -109,7 +108,8 @@ class Classifier(nn.Module):
             class_weight = 1
         n_epochs = self.params["n_epochs"]* int(class_weight)
         lr = self.params["lr"]
-        optimizer = torch.optim.Adam(self.network.parameters(), lr=lr)
+        #optimizer = torch.optim.Adam(self.network.parameters(), lr=lr)
+        optimizer = Lion(self.network.parameters(), lr=lr)
         n_batches = min(len(loader_true), len(loader_false))
         logging.info(f"Training classifier for {n_epochs} epochs with lr {lr}")
         scheduler = torch.optim.lr_scheduler.OneCycleLR(
@@ -146,28 +146,32 @@ class Classifier(nn.Module):
     def evaluate(self, data, return_weights=True):
         predictions = []
         with torch.no_grad():
+            self.network = self.network.to(data.device)
             for batch in torch.split(data, self.params["batch_size_sample"]):
                 pred = self.network(batch).squeeze().detach()
                 predictions.append(pred)
         predictions = torch.cat(predictions)
         return predictions.exp().clip(0, 30) if return_weights else torch.sigmoid(predictions)
 
-
+    
 class Model(nn.Module):
-
     def __init__(self):
         super().__init__()
         self.epochs = 0
     def init_network(self):
         layers = []
+    
+        # Input layer
         layers.append(nn.Linear(self.dims_in, self.params["internal_size"]))
-        layers.append(nn.ReLU())
+        layers.append(nn.LeakyReLU())        
         for _ in range(self.params["hidden_layers"]):
             layers.append(nn.Linear(self.params["internal_size"], self.params["internal_size"]))
-            layers.append(nn.ReLU())
-        layers.append(nn.Linear(self.params["internal_size"], self.dims_x))
-        self.network = nn.Sequential(*layers)
+            layers.append(nn.LeakyReLU())        
 
+        # Output layer
+        layers.append(nn.Linear(self.params["internal_size"], self.dims_x))
+
+        self.network = nn.Sequential(*layers)
     def train(self, data_x, data_c=None, weights=None):
         if weights is None:
             weights = torch.ones((data_x.shape[0]))
@@ -182,7 +186,7 @@ class Model(nn.Module):
         n_epochs = self.params["n_epochs"]
         lr = self.params["lr"]
         #optimizer = torch.optim.Adam(self.network.parameters(), lr=lr)
-        optimizer = Lion(self.network.parameters(), lr=lr,weight_decay = 0.1)
+        optimizer = Lion(self.network.parameters(), lr=lr,weight_decay = 0.001)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, len(loader) * n_epochs)
         logging.info(f"Training CFM for {n_epochs} epochs with lr {lr}")
 
@@ -217,129 +221,6 @@ class Model(nn.Module):
         return predictions
 
 
-class FlowSubtraction(Model):
-    def __init__(self, dims_x, dims_c, params, background_model, bkg_fraction = 0.1):
-        super().__init__()
-        self.dims_x = dims_x
-        self.dims_c = dims_c
-        self.params = params
-        self.dims_in = self.dims_x + self.dims_c + 1
-        self.background_model = background_model
-        self.bkg_fraction = bkg_fraction
-        for param in self.background_model.parameters():
-            param.requires_grad = False
-        self.init_network()
-        
-        
-    def init_network(self):
-        base = nf.distributions.DiagGaussian(self.dims_x, trainable=False)
-        flows = []
-        for _ in range(self.params["hidden_layers"]):
-            # Neural spline flow with rational quadratic splines
-            flows += [nf.flows.MaskedAffineAutoregressive(self.dims_x, 
-                                                          #self.params["hidden_layers"], 
-                                                          self.params["internal_size"], 
-                                                          num_blocks = 1,
-                                                          context_features=self.dims_c if self.dims_c > 0 else None)]
-            flows += [nf.flows.LULinearPermute(self.dims_x)]
-        
- 
-        self.network = nf.ConditionalNormalizingFlow(base, flows)
-        
-
-    def sample(self, c = None, num_evts = 0):
-        if c is not None:
-            batch_size = c.size(0)            
-            self.network = self.network.to(c.device)
-        else:
-            batch_size = num_evts
-            
-        assert batch_size >0, "ERROR, batch size not properly set. Either fix the number of events of send a conditioning array"
-            
-        samples = self.network.sample(batch_size,c)[0]        
-        return samples
-
-    def batch_loss(self, x, weight, c = None):       
-        bkg_p = torch.exp(self.background_model.log_prob(x,c))
-        loss = -torch.mean(torch.log(((1.0 - self.bkg_fraction)*torch.exp(self.network.log_prob(x,c)) + self.bkg_fraction*bkg_p))*weight.unsqueeze(-1))
-        return loss
-    
-    def evaluate(self, data_c=None, num_evts = 0):
-        predictions = []
-        with torch.no_grad():
-            if data_c is not None:
-                for batch in torch.split(data_c, self.params["batch_size_sample"]):
-                    predictions.append(self.sample(batch).detach())
-            else:
-                num_batches = num_evts//self.params["batch_size_sample"]
-                for _ in range(num_batches):
-                    predictions.append(self.sample(num_evts = self.params["batch_size_sample"]).detach())
-                #Last batch
-                residual = num_evts % self.params["batch_size_sample"]
-                if residual > 0:
-                    predictions.append(self.sample(num_evts = residual).detach())
-        predictions = torch.cat(predictions)
-        return predictions
-
-
-class Flow(Model):
-    def __init__(self, dims_x, dims_c, params):
-        super().__init__()
-        self.dims_x = dims_x
-        self.dims_c = dims_c
-        self.params = params
-        self.init_network()
-        
-        
-    def init_network(self):
-        base = nf.distributions.DiagGaussian(self.dims_x, trainable=False)
-        flows = []
-        for _ in range(self.params["hidden_layers"]):
-            # Neural spline flow with rational quadratic splines
-            flows += [nf.flows.MaskedAffineAutoregressive(self.dims_x, 
-                                                          #self.params["hidden_layers"], 
-                                                          self.params["internal_size"], 
-                                                          num_blocks = 1,
-                                                          context_features=self.dims_c if self.dims_c > 0 else None)]
-            flows += [nf.flows.LULinearPermute(self.dims_x)]
-        
- 
-        self.network = nf.ConditionalNormalizingFlow(base, flows) 
-        
-    def sample(self, c = None, num_evts = 0):
-        if c is not None:
-            batch_size = c.size(0)            
-            self.network = self.network.to(c.device)
-        else:
-            batch_size = num_evts
-            
-        assert batch_size >0, "ERROR, batch size not properly set. Either fix the number of events of send a conditioning array"
-            
-        samples = self.network.sample(batch_size,c)[0]        
-        return samples
-
-    def batch_loss(self, x, weight, c = None):           
-        #loss =  self.network.forward_kld(x, context) 
-        loss = -(self.network.log_prob(x,c)*weight.unsqueeze(-1)).mean()                   
-        return loss
-    
-    def evaluate(self, data_c=None, num_evts = 0):
-        predictions = []
-        with torch.no_grad():
-            if data_c is not None:
-                for batch in torch.split(data_c, self.params["batch_size_sample"]):
-                    predictions.append(self.sample(batch).detach())
-            else:
-                num_batches = num_evts//self.params["batch_size_sample"]
-                for _ in range(num_batches):
-                    predictions.append(self.sample(num_evts = self.params["batch_size_sample"]).detach())
-                #Last batch
-                residual = num_evts % self.params["batch_size_sample"]
-                if residual > 0:
-                    predictions.append(self.sample(num_evts = residual).detach())
-        predictions = torch.cat(predictions)
-        return predictions
-    
     
 class CFM(Model):
     def __init__(self, dims_x, dims_c, params, logger):
@@ -350,25 +231,149 @@ class CFM(Model):
         self.dims_in = self.dims_x + self.dims_c + 1
         self.init_network()
         self.logger = logger
-    def sample(self, c):
-        batch_size = c.size(0)
-        dtype = c.dtype
-        device = c.device
+        
+    def sample(self, c = None, num_evts = 0, device = None, dtype = None):
+        if c is not None:
+            batch_size = c.size(0)            
+            self.network = self.network.to(c.device)
+            device = device if device is not None else c.device
+            dtype = dtype if dtype is not None else c.dtype
+        else:
+            batch_size = num_evts
 
         def net_wrapper(t, x_t):
-            t = t * torch.ones_like(x_t[:, [0]], dtype=dtype, device=device)
-            v = self.network(torch.cat([t, x_t, c], dim=-1))
+            t = t * torch.ones_like(x_t[:, [0]], device=device, dtype=dtype)
+            if c is not None:
+                x_t = torch.cat([x_t,c],-1)
+            v = self.network(torch.cat([t, x_t],-1))
             return v
 
         x_0 = torch.randn((batch_size, self.dims_x)).to(device, dtype=dtype)
         x_t = odeint(func=net_wrapper, y0=x_0, t=torch.tensor([0., 1.]).to(device, dtype=dtype))
         return x_t[-1]
 
-    def batch_loss(self, x, weight, c):
+    def batch_loss(self, x, weight, c=None):
         x_0 = torch.randn((x.size(0), self.dims_x)).to(x.device)
         t = torch.rand((x.size(0), 1)).to(x.device)
         x_t = (1 - t) * x_0 + t * x
         x_t_dot = x - x_0
-        v_pred = self.network(torch.cat([t, x_t, c], dim=-1))
+        if c is not None:
+            x_t = torch.cat([x_t,c],-1)
+        
+        v_pred = self.network(torch.cat([t, x_t],-1))
         cfm_loss = ((v_pred - x_t_dot) ** 2 * weight.unsqueeze(-1)).mean()
         return cfm_loss
+
+    def evaluate(self, data_c=None, num_evts = 0, device = None, dtype = None):
+        predictions = []
+        with torch.no_grad():
+            if data_c is not None:
+                for batch in torch.split(data_c, self.params["batch_size_sample"]):
+                    predictions.append(self.sample(batch).detach())
+            else:
+                num_batches = num_evts//self.params["batch_size_sample"]
+                for _ in range(num_batches):
+                    predictions.append(self.sample(
+                        num_evts = self.params["batch_size_sample"],
+                        device = device, dtype = dtype).detach())
+                #Last batch
+                residual = num_evts % self.params["batch_size_sample"]
+                if residual > 0:
+                    predictions.append(self.sample(num_evts = residual,device = device, dtype = dtype).detach())
+        predictions = torch.cat(predictions)
+        return predictions
+
+
+class Flow(Model):
+    def __init__(self, dims_x, dims_c, params, logger):
+        super().__init__()
+        self.dims_x = dims_x
+        self.dims_c = dims_c
+        self.params = params
+        self.logger = logger
+        self.init_network()
+        
+        
+    def init_network(self):
+        base = nf.distributions.DiagGaussian(self.dims_x, trainable=False)
+        flows = []
+
+        
+        for _ in range(self.params["hidden_layers"]):
+
+            flows += [nf.flows.CoupledRationalQuadraticSpline(self.dims_x,
+                                                              4,
+                                                              self.params["internal_size"], 
+                                                              num_context_channels=self.dims_c if self.dims_c > 0 else None,
+                                                              activation=nn.LeakyReLU,
+                                                              num_bins=8,
+                                                              tail_bound=5.0),
+                      
+                      nf.flows.LULinearPermute(self.dims_x)
+                      ]
+        
+ 
+        self.network = nf.ConditionalNormalizingFlow(base, flows) 
+        
+    def sample(self, c = None, num_evts = 0, device = None, dtype = None):
+        if c is not None:
+            batch_size = c.size(0)            
+            self.network = self.network.to(c.device)
+            device = device if device is not None else c.device
+            dtype = dtype if dtype is not None else c.dtype
+        else:
+            batch_size = num_evts
+            
+        assert batch_size >0, "ERROR, batch size not properly set. Either fix the number of events of send a conditioning array"
+            
+        samples = self.network.sample(batch_size,c)[0]        
+        return samples
+
+    def batch_loss(self, x, weight, c = None):           
+        loss =  (self.network.forward_kld(x, c)*weight.unsqueeze(-1)).mean()
+        #loss = -(self.network.log_prob(x,c)*weight.unsqueeze(-1)).mean()                   
+        return loss
+    
+    def evaluate(self, data_c=None, num_evts = 0, device = None, dtype = None):
+        predictions = []
+        with torch.no_grad():
+            if data_c is not None:
+                for batch in torch.split(data_c, self.params["batch_size_sample"]):
+                    predictions.append(self.sample(batch).detach())
+            else:
+                num_batches = num_evts//self.params["batch_size_sample"]
+                for _ in range(num_batches):
+                    predictions.append(self.sample(num_evts = self.params["batch_size_sample"]).detach())
+                #Last batch
+                residual = num_evts % self.params["batch_size_sample"]
+                if residual > 0:
+                    predictions.append(self.sample(num_evts = residual).detach())
+        predictions = torch.cat(predictions)
+        return predictions
+    
+
+    
+class Base2FourierFeatures(nn.Module):
+    def __init__(self, start=0, stop=8, step=1):
+        super().__init__()
+        self.start = start
+        self.stop = stop
+        self.step = step
+
+    def forward(self, inputs):
+        # inputs: (..., D)
+        dtype = inputs.dtype
+        freqs = torch.arange(self.start, self.stop, self.step, dtype=dtype, device=inputs.device)
+
+        # Compute base-2 frequencies
+        w = 2 ** freqs * (2 * math.pi)  # shape: (num_freqs,)
+        w = w.unsqueeze(0).repeat(inputs.shape[-1], 1).T  # shape: (num_freqs, D)
+
+        # Repeat input along frequency dimension
+        h = inputs.unsqueeze(-2).repeat(1, w.shape[0], 1)  # shape: (B, num_freqs, D)
+        h = h * w  # element-wise multiplication
+        h = h.view(*inputs.shape[:-1], -1)  # flatten freq x dim
+
+        # Apply sin and cos
+        features = torch.cat([torch.sin(h), torch.cos(h)], dim=-1)
+        return features

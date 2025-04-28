@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 
 file = pd.read_csv("zv_background.txt", sep=" ", header=None)
 
@@ -21,4 +22,19 @@ reco[:, 5][np.isnan(reco[:,5])] = 0
 reco[: ,4] = reco[:, 4]/(10**-50+reco[:, 2])
 reco[:, 3 ] = 2*np.ma.log(np.ma.divide(reco[:, 3], reco[:, 6]).filled(0)).filled(0)
 
+mask = (reco[:, 0] < 150) & (reco[:, 3] > -20)
+print(1.0*np.sum(mask)/reco.shape[0])
+reco = reco[mask]
+
 np.save("reco_bkg.npy", reco)
+
+for i in range(reco.shape[-1]):
+    plt.figure()
+    y_true = plt.hist(reco[:,i],bins = 60,label = "True signal", histtype='step')    
+    plt.legend()
+    plt.xlabel(f"Feature {i}")
+    plt.ylabel("Counts")
+    plt.title(f"Signal Feature {i}")
+    plt.savefig(f"Signal_feat{i}.pdf")
+    plt.close()
+    

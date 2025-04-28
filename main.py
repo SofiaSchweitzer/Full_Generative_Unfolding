@@ -192,7 +192,7 @@ def main():
         for i, observable in enumerate(data.observables):
             plot_prior_unfold(out, data.data_gen[:, i][data.data_rec_mask[:len(data.data_signal_rec)].bool()],
                               data.mc_gen[:, i][(data.mc_rec_mask.bool())], data_unfold[:, i],
-                            unfolded_weights=background_weights.cpu(),
+                              unfolded_weights=background_weights.cpu(),
                               bins=observable["bins"], name=observable["tex_label"],yscale=observable["yscale"])
 
     with PdfPages(f"{plot_path}/efficiency_effects.pdf") as out:
