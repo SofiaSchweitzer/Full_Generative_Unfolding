@@ -83,7 +83,13 @@ class Classifier(nn.Module):
         loss = torch.nn.BCEWithLogitsLoss(weight=w)(pred, y)
         return loss
 
-    def train_classifier(self, data_true, data_false, weights_true=None, weights_false=None, balanced=True):
+    def train_classifier(self,
+                         data_true,
+                         data_false,
+                         weights_true=None,
+                         weights_false=None,
+                         balanced=True):
+
         if weights_true is None:
             weights_true = torch.ones((data_true.shape[0])).to(data_true.device, dtype=data_true.dtype)
         if weights_false is None:
@@ -136,6 +142,85 @@ class Classifier(nn.Module):
             self.logger.add_scalar(f"{self.model_name}/train_losses_epoch", torch.tensor(losses).mean(), epoch)
         logging.info(f"    Finished epoch {epoch} with average loss {torch.tensor(losses).mean()} after time {round(time.time() - t0, 1)}")
 
+    def train_classifier_with_validation(self,
+                         data_true,
+                         data_false,
+                         weights_true=None,
+                         weights_false=None,
+                         ):
+
+        if weights_true is None:
+            weights_true = torch.ones((data_true.shape[0])).to(data_true.device, dtype=data_true.dtype)
+        if weights_false is None:
+            weights_false = torch.ones((data_false.shape[0])).to(data_true.device, dtype=data_true.dtype)
+
+        train_dataset_true = torch.utils.data.TensorDataset(data_true[:-50000], weights_true[:-50000])
+        train_loader_true = torch.utils.data.DataLoader(train_dataset_true, batch_size=self.params["batch_size"],
+                                                  shuffle=True)
+        train_dataset_false = torch.utils.data.TensorDataset(data_false[:-50000], weights_false[:-50000])
+        train_loader_false = torch.utils.data.DataLoader(train_dataset_false, batch_size=self.params["batch_size"],
+                                                   shuffle=True)
+
+        val_dataset_true = torch.utils.data.TensorDataset(data_true[-50000:], weights_true[-50000:])
+        val_loader_true = torch.utils.data.DataLoader(val_dataset_true, batch_size=self.params["batch_size"],
+                                                        shuffle=True)
+        val_dataset_false = torch.utils.data.TensorDataset(data_false[-50000:], weights_false[-50000:])
+        val_loader_false = torch.utils.data.DataLoader(val_dataset_false, batch_size=self.params["batch_size"],
+                                                         shuffle=True)
+
+
+        n_epochs = self.params["n_epochs"]
+        lr = self.params["lr"]
+        optimizer = torch.optim.Adam(self.network.parameters(), lr=lr)
+
+        logging.info(f"Training classifier for {n_epochs} epochs with lr {lr}")
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer=optimizer,
+            factor=self.params["lr_decay_factor"],
+            patience=self.params["lr_patience"]
+        )
+        t0 = time.time()
+
+        for epoch in range(n_epochs):
+            losses = []
+            val_losses = []
+            self.train()
+            for i, (batch_true, batch_false) in enumerate(zip(train_loader_true, train_loader_false)):
+                x_true, weight_true = batch_true
+                x_false, weight_false = batch_false
+                label_true = torch.ones((x_true.shape[0])).to(x_true.device)
+                label_false = torch.zeros((x_false.shape[0])).to(x_false.device)
+                optimizer.zero_grad()
+                loss = self.batch_loss(x_true, label_true, weight_true)
+                loss += self.batch_loss(x_false, label_false, weight_false)
+                loss.backward()
+                optimizer.step()
+
+                losses.append(loss.item())
+                self.logger.add_scalar(f"{self.model_name}/train_losses", losses[-1], epoch * len(train_loader_true) + i)
+                self.logger.add_scalar(f"{self.model_name}/learning_rate", scheduler.get_last_lr()[0],
+                                       len(train_loader_true) * epoch + i)
+            if epoch % int(n_epochs / 5) == 0:
+                logging.info(
+                    f"    Finished epoch {epoch} with average loss {torch.tensor(losses).mean()} after time {round(time.time() - t0, 1)}")
+
+            self.logger.add_scalar(f"{self.model_name}/train_losses_epoch", torch.tensor(losses).mean(), epoch)
+            for _, (batch_true, batch_false) in enumerate(zip(val_loader_true, val_loader_false)):
+                self.eval()
+                x_true, weight_true = batch_true
+                x_false, weight_false = batch_false
+                label_true = torch.ones((x_true.shape[0])).to(x_true.device)
+                label_false = torch.zeros((x_false.shape[0])).to(x_false.device)
+                with torch.no_grad():
+                    val_loss = self.batch_loss(x_true, label_true, weight_true)
+                    val_loss += self.batch_loss(x_false, label_false, weight_false)
+                val_losses.append(val_loss.item())
+            scheduler.step(torch.tensor(val_losses).mean())
+            self.logger.add_scalar(f"{self.model_name}/val_losses_epoch", torch.tensor(val_losses).mean(), epoch)
+
+        logging.info(
+            f"    Finished epoch {epoch} with average loss {torch.tensor(losses).mean()} after time {round(time.time() - t0, 1)}")
+
     def evaluate(self, data, return_weights=True):
         predictions = []
         with torch.no_grad():
@@ -162,20 +247,26 @@ class Model(nn.Module):
         self.network = nn.Sequential(*layers)
 
     def train_unfolder(self, data_x, data_c, weights=None):
+
         if weights is None:
             weights = torch.ones((data_x.shape[0]))
-        dataset = torch.utils.data.TensorDataset(data_x, data_c, weights)
-        loader = torch.utils.data.DataLoader(dataset, batch_size=self.params["batch_size"],
+        train_dataset = torch.utils.data.TensorDataset(data_x[:-50000], data_c[:-50000], weights[:-50000])
+        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=self.params["batch_size"],
                                              shuffle=True)
+        val_dataset = torch.utils.data.TensorDataset(data_x[-50000:], data_c[-50000:], weights[-50000:])
+        val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=self.params["batch_size"],
+                                                   shuffle=True)
         n_epochs = self.params["n_epochs"]
         lr = self.params["lr"]
         optimizer = torch.optim.Adam(self.network.parameters(), lr=lr)
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, len(loader) * n_epochs)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, len(train_loader) * n_epochs)
         logging.info(f"Training CFM for {n_epochs} epochs with lr {lr}")
         t0 = time.time()
         for epoch in range(n_epochs):
             losses = []
-            for i, batch in enumerate(loader):
+            val_losses = []
+            for i, batch in enumerate(train_loader):
+                self.network.train()
                 x_hard, x_reco, weight = batch
                 optimizer.zero_grad()
                 loss = self.batch_loss(x_hard, x_reco, weight)
@@ -183,16 +274,26 @@ class Model(nn.Module):
                 optimizer.step()
                 scheduler.step()
                 losses.append(loss.item())
-                self.logger.add_scalar(f"unfolder/train_losses", losses[-1], self.epochs * len(loader) + i)
+                self.logger.add_scalar(f"unfolder/train_losses", losses[-1], self.epochs * len(train_loader) + i)
                 self.logger.add_scalar(f"unfolder/learning_rate", scheduler.get_last_lr()[0],
-                                       len(loader) * self.epochs + i)
+                                       len(train_loader) * self.epochs + i)
             if epoch % int(n_epochs / 5) == 0:
                 logging.info(
                     f"    Finished epoch {epoch} with average loss {torch.tensor(losses).mean()} after time {round(time.time() - t0, 1)}")
             self.logger.add_scalar(f"unfolder/train_losses_epoch", torch.tensor(losses).mean(), self.epochs)
             self.epochs += 1
+
+            for i, batch in enumerate(val_loader):
+                self.network.eval()
+                x_hard, x_reco, weight = batch
+                with torch.no_grad():
+                    val_loss = self.batch_loss(x_hard, x_reco, weight)
+                    val_losses.append(val_loss)
+                self.logger.add_scalar(f"unfolder/val_losses_epoch", torch.tensor(val_losses).mean(), self.epochs)
+
         logging.info(
             f"    Finished epoch {epoch} with average loss {torch.tensor(losses).mean()} after time {round(time.time() - t0, 1)}")
+
 
     def evaluate(self, data_c):
         predictions = []
@@ -202,7 +303,6 @@ class Model(nn.Module):
                 predictions.append(unfold_cfm)
         predictions = torch.cat(predictions)
         return predictions
-
 
 class CFM(Model):
     def __init__(self, dims_x, dims_c, params, logger):

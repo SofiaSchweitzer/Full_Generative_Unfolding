@@ -43,6 +43,7 @@ class GaussianToy:
                 self.mc_background_mask = ~((self.mc_background_rec > cut_position).squeeze())
             except:
                 self.mc_rec_mask = self.apply_efficiency_acceptance_effects(self.mc_rec, self.params["efficiency"])
+                self.mc_background_mask = torch.ones_like(self.mc_background_rec[:,0])
             # self.mc_rec = self.mc_rec[self.mc_rec_mask]
             # self.mc_gen = self.mc_gen[self.mc_rec_mask]
 
