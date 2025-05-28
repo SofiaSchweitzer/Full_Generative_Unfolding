@@ -5,6 +5,7 @@ from torchdiffeq import odeint
 import math
 import normflows as nf
 from pytorch_optimizer import Lion
+from torch.utils.data import DataLoader, TensorDataset, random_split
 
 import logging
 
@@ -65,7 +66,7 @@ class Regressor(nn.Module):
         return predictions
 
 class Classifier(nn.Module):
-    def __init__(self, dims_in, params, logger, model_name):
+    def __init__(self, dims_in, params, model_name, logger=None):
         super().__init__()
         self.dims_in = dims_in
         self.params = params
@@ -75,10 +76,10 @@ class Classifier(nn.Module):
     def init_network(self):
         layers = []
         layers.append(nn.Linear(self.dims_in, self.params["internal_size"]))
-        layers.append(nn.LeakyReLU())
+        layers.append(nn.GELU())
         for _ in range(self.params["hidden_layers"]):
             layers.append(nn.Linear(self.params["internal_size"], self.params["internal_size"]))
-            layers.append(nn.LeakyReLU())
+            layers.append(nn.GELU())
         layers.append(nn.Linear(self.params["internal_size"], 1))
         self.network = nn.Sequential(*layers)
 
@@ -134,13 +135,15 @@ class Classifier(nn.Module):
                 optimizer.step()
                 scheduler.step()
                 losses.append(loss.item())
-                self.logger.add_scalar(f"{self.model_name}/train_losses", losses[-1], epoch * len(loader_true) + i)
-                self.logger.add_scalar(f"{self.model_name}/learning_rate", scheduler.get_last_lr()[0],
-                                       len(loader_true) * epoch + i)
+                if self.logger is not None:
+                    self.logger.add_scalar(f"{self.model_name}/train_losses", losses[-1], epoch * len(loader_true) + i)
+                    self.logger.add_scalar(f"{self.model_name}/learning_rate", scheduler.get_last_lr()[0],
+                                           len(loader_true) * epoch + i)
             if epoch % int(n_epochs / 5) == 0:
                 logging.info(f"    Finished epoch {epoch} with average loss {torch.tensor(losses).mean()} after time {round(time.time() - t0, 1)}")
 
-            self.logger.add_scalar(f"{self.model_name}/train_losses_epoch", torch.tensor(losses).mean(), epoch)
+            if self.logger is not None:
+                self.logger.add_scalar(f"{self.model_name}/train_losses_epoch", torch.tensor(losses).mean(), epoch)
         logging.info(f"    Finished epoch {epoch} with average loss {torch.tensor(losses).mean()} after time {round(time.time() - t0, 1)}")
 
     def evaluate(self, data, return_weights=True):
@@ -158,21 +161,23 @@ class Model(nn.Module):
     def __init__(self):
         super().__init__()
         self.epochs = 0
+        self.patience = 30
+        self.test_frac = 0.2
     def init_network(self):
         layers = []
     
         # Input layer
         layers.append(nn.Linear(self.dims_in, self.params["internal_size"]))
-        layers.append(nn.LeakyReLU())        
+        layers.append(nn.GELU())        
         for _ in range(self.params["hidden_layers"]):
             layers.append(nn.Linear(self.params["internal_size"], self.params["internal_size"]))
-            layers.append(nn.LeakyReLU())        
+            layers.append(nn.GELU())        
 
         # Output layer
         layers.append(nn.Linear(self.params["internal_size"], self.dims_x))
 
         self.network = nn.Sequential(*layers)
-    def train(self, data_x, data_c=None, weights=None):
+    def train(self, data_x, data_c=None, weights=None, test_frac = 0.2):
         if weights is None:
             weights = torch.ones((data_x.shape[0]))
         if data_c is not None:
@@ -180,37 +185,80 @@ class Model(nn.Module):
             dataset = torch.utils.data.TensorDataset(data_x, weights, data_c)
         else:
             dataset = torch.utils.data.TensorDataset(data_x, weights)
- 
-        loader = torch.utils.data.DataLoader(dataset, batch_size=self.params["batch_size"],shuffle=True)
-        self.network = self.network.to(data_x.device)
+
+
+        total = len(dataset)
+        test_len = int(total * self.test_frac)
+        train_len = total - test_len
+        train_set, test_set = random_split(dataset, [train_len, test_len])
+        # DataLoaders
+        batch_size = self.params.get("batch_size", 32)
+        train_loader = DataLoader(
+            train_set,
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=self.params.get("num_workers", 0),
+            pin_memory=self.params.get("pin_memory", False),
+        )
+        test_loader = DataLoader(
+            test_set,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=0,
+        )
+
+        self.network = self.network.to(data_x.device)        
         n_epochs = self.params["n_epochs"]
         lr = self.params["lr"]
         #optimizer = torch.optim.Adam(self.network.parameters(), lr=lr)
-        optimizer = Lion(self.network.parameters(), lr=lr,weight_decay = 0.001)
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, len(loader) * n_epochs)
+        optimizer = Lion(self.network.parameters(), lr=lr, wd = 0.01)
+        
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, len(train_loader) * n_epochs)
         logging.info(f"Training CFM for {n_epochs} epochs with lr {lr}")
 
-        t0 = time.time()
+        best_loss = float('inf')
+        epochs_no_improve = 0
+        best_model_wts = {k: v.clone() for k, v in self.network.state_dict().items()}
+                
+        t0 = time.time()                
         for epoch in range(n_epochs):
-            losses = []
-            for i, batch in enumerate(loader):
+            self.network.train()
+            train_losses = []
+            for i, batch in enumerate(train_loader):
                 optimizer.zero_grad()
                 loss = self.batch_loss(*batch)
                 loss.backward()
                 optimizer.step()
                 scheduler.step()
-                losses.append(loss.item())
-                self.logger.add_scalar(f"unfolder/train_losses", losses[-1], self.epochs * len(loader) + i)
-                self.logger.add_scalar(f"unfolder/learning_rate", scheduler.get_last_lr()[0],
-                                       len(loader) * self.epochs + i)
-            if epoch % int(n_epochs / 5) == 0:
-                logging.info(
-                    f"    Finished epoch {epoch} with average loss {torch.tensor(losses).mean()} after time {round(time.time() - t0, 1)}")
-            self.logger.add_scalar(f"unfolder/train_losses_epoch", torch.tensor(losses).mean(), self.epochs)
-            self.epochs += 1
-        logging.info(
-            f"    Finished epoch {epoch} with average loss {torch.tensor(losses).mean()} after time {round(time.time() - t0, 1)}")
+                train_losses.append(loss.item())
 
+            self.network.eval()
+            test_losses = []
+            with torch.no_grad():
+                for batch in test_loader:
+                    loss = self.batch_loss(*batch)
+                    test_losses.append(loss.item())
+
+            avg_test_loss = sum(test_losses) / len(test_losses)
+            logging.info(f"Epoch {epoch + 1}: train_loss={sum(train_losses)/len(train_losses):.4f}, test_loss={avg_test_loss:.4f}")
+
+            # Early stopping check
+            if avg_test_loss < best_loss:
+                best_loss = avg_test_loss
+                epochs_no_improve = 0
+                best_model_wts = {k: v.clone() for k, v in self.network.state_dict().items()}
+
+            else:
+                epochs_no_improve += 1
+                if epochs_no_improve >= self.patience:
+                    logging.info(f"No improvement for {self.patience} epochs. Stopping early at epoch {epoch + 1}.")
+                    break
+
+            self.epochs += 1
+            
+        self.network.load_state_dict(best_model_wts)                    
+        logging.info(f"Training complete. Total epochs run: {self.epochs}. Elapsed time: {time.time() - t0:.1f}s")
+                
     def evaluate(self, data_c):
         predictions = []
         with torch.no_grad():
@@ -223,7 +271,7 @@ class Model(nn.Module):
 
     
 class CFM(Model):
-    def __init__(self, dims_x, dims_c, params, logger):
+    def __init__(self, dims_x, dims_c, params, logger = None):
         super().__init__()
         self.dims_x = dims_x
         self.dims_c = dims_c
@@ -283,97 +331,3 @@ class CFM(Model):
         predictions = torch.cat(predictions)
         return predictions
 
-
-class Flow(Model):
-    def __init__(self, dims_x, dims_c, params, logger):
-        super().__init__()
-        self.dims_x = dims_x
-        self.dims_c = dims_c
-        self.params = params
-        self.logger = logger
-        self.init_network()
-        
-        
-    def init_network(self):
-        base = nf.distributions.DiagGaussian(self.dims_x, trainable=False)
-        flows = []
-
-        
-        for _ in range(self.params["hidden_layers"]):
-
-            flows += [nf.flows.CoupledRationalQuadraticSpline(self.dims_x,
-                                                              4,
-                                                              self.params["internal_size"], 
-                                                              num_context_channels=self.dims_c if self.dims_c > 0 else None,
-                                                              activation=nn.LeakyReLU,
-                                                              num_bins=8,
-                                                              tail_bound=5.0),
-                      
-                      nf.flows.LULinearPermute(self.dims_x)
-                      ]
-        
- 
-        self.network = nf.ConditionalNormalizingFlow(base, flows) 
-        
-    def sample(self, c = None, num_evts = 0, device = None, dtype = None):
-        if c is not None:
-            batch_size = c.size(0)            
-            self.network = self.network.to(c.device)
-            device = device if device is not None else c.device
-            dtype = dtype if dtype is not None else c.dtype
-        else:
-            batch_size = num_evts
-            
-        assert batch_size >0, "ERROR, batch size not properly set. Either fix the number of events of send a conditioning array"
-            
-        samples = self.network.sample(batch_size,c)[0]        
-        return samples
-
-    def batch_loss(self, x, weight, c = None):           
-        loss =  (self.network.forward_kld(x, c)*weight.unsqueeze(-1)).mean()
-        #loss = -(self.network.log_prob(x,c)*weight.unsqueeze(-1)).mean()                   
-        return loss
-    
-    def evaluate(self, data_c=None, num_evts = 0, device = None, dtype = None):
-        predictions = []
-        with torch.no_grad():
-            if data_c is not None:
-                for batch in torch.split(data_c, self.params["batch_size_sample"]):
-                    predictions.append(self.sample(batch).detach())
-            else:
-                num_batches = num_evts//self.params["batch_size_sample"]
-                for _ in range(num_batches):
-                    predictions.append(self.sample(num_evts = self.params["batch_size_sample"]).detach())
-                #Last batch
-                residual = num_evts % self.params["batch_size_sample"]
-                if residual > 0:
-                    predictions.append(self.sample(num_evts = residual).detach())
-        predictions = torch.cat(predictions)
-        return predictions
-    
-
-    
-class Base2FourierFeatures(nn.Module):
-    def __init__(self, start=0, stop=8, step=1):
-        super().__init__()
-        self.start = start
-        self.stop = stop
-        self.step = step
-
-    def forward(self, inputs):
-        # inputs: (..., D)
-        dtype = inputs.dtype
-        freqs = torch.arange(self.start, self.stop, self.step, dtype=dtype, device=inputs.device)
-
-        # Compute base-2 frequencies
-        w = 2 ** freqs * (2 * math.pi)  # shape: (num_freqs,)
-        w = w.unsqueeze(0).repeat(inputs.shape[-1], 1).T  # shape: (num_freqs, D)
-
-        # Repeat input along frequency dimension
-        h = inputs.unsqueeze(-2).repeat(1, w.shape[0], 1)  # shape: (B, num_freqs, D)
-        h = h * w  # element-wise multiplication
-        h = h.view(*inputs.shape[:-1], -1)  # flatten freq x dim
-
-        # Apply sin and cos
-        features = torch.cat([torch.sin(h), torch.cos(h)], dim=-1)
-        return features

@@ -4,8 +4,7 @@ import h5py
 
 
 class Omnifold:
-
-    def __init__(self, path, nmc,ndata,nbkg,empty_value= -10.,val=False):
+    def __init__(self, path, nmc,ndata,nbkg,empty_value= -10.,val=False, use_weights = False):
         self.path = path
         self.val = val
         self.nmc = nmc
@@ -13,23 +12,18 @@ class Omnifold:
         self.nbkg = nbkg
         self.empty_value=empty_value
         self.cut = 150.
+        self.use_weights = use_weights
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.init_dataset()
         self.init_observables()
 
-    def apply_cuts_preprocessed(self,dataset):
-        d, _ ,_, _, _= self.apply_preprocessing(dataset, parameters=[self.mean, self.std,self.shift, self.factor],reverse=True)
-        mask = d[:,6] > self.cut
-        return mask.to(dataset.device)
-
     def revert(self,dataset):
         d, _ ,_, _, _= self.apply_preprocessing(dataset, parameters=[self.mean, self.std,self.shift, self.factor],reverse=True)
-        mask = d[:,6] > self.cut
-        return d[mask].cpu().detach().numpy()
+        return d.cpu().detach().numpy()
 
     def set_preprocess_params(self):
-        self.mean = torch.tensor([2.7450, 17.8664,  0.1363, -7.0481,  0.6714, -0.0195,  5.3659])
-        self.std = torch.tensor([0.5391, 8.0726, 0.0942, 2.2142, 0.2056, 0.7286, 0.3564])
+        self.mean = torch.tensor([2.7450, 17.8664,  0.1363, -7.0481,  0.6714, -0.0195])
+        self.std = torch.tensor([0.5391, 8.0726, 0.0942, 2.2142, 0.2056, 0.7286])
         self.shift = torch.tensor(-1.5131)
         self.factor = torch.tensor(0.8208)
 
@@ -41,16 +35,24 @@ class Omnifold:
             mc_rec = np.load(f"{path}/reco_MC.npy")[self.nmc:]
             mc_gen = np.load(f"{path}/gen_MC.npy")[self.nmc:]
             #data signal
-            data_rec = np.load(f"{path}/reco_data.npy")[self.ndata:]
-            data_gen = np.load(f"{path}/gen_data.npy")[self.ndata:]
+            if self.use_weights:
+                data_rec = np.load(f"{path}/reco_MC.npy")[self.ndata:] 
+                data_gen = np.load(f"{path}/gen_MC.npy")[self.ndata:]  
+            else:
+                data_rec = np.load(f"{path}/reco_data.npy")[self.ndata:]
+                data_gen = np.load(f"{path}/gen_data.npy")[self.ndata:]
         else:
             #MC signal
             mc_rec = np.load(f"{path}/reco_MC.npy")[:self.nmc]
             mc_gen = np.load(f"{path}/gen_MC.npy")[:self.nmc]
             #data signal
-            data_rec = np.load(f"{path}/reco_data.npy")[:self.ndata]
-            data_gen = np.load(f"{path}/gen_data.npy")[:self.ndata]
-        #bkg
+            if self.use_weights:
+                data_rec = np.load(f"{path}/reco_MC.npy")[:self.ndata]
+                data_gen = np.load(f"{path}/gen_MC.npy")[:self.ndata]
+            else:
+                data_rec = np.load(f"{path}/reco_data.npy")[:self.ndata]
+                data_gen = np.load(f"{path}/gen_data.npy")[:self.ndata]
+
         bkg = np.load(f"{path}/reco_bkg.npy")[:self.nbkg]
 
         self.mc_gen = torch.tensor(mc_gen).float()#.to(self.device)
@@ -83,15 +85,28 @@ class Omnifold:
     def apply_cuts(self,cut_val=150):
         
         self.data_gen_mask = self.data_gen[:, 6] > cut_val
-        self.data_sig_mask = self.data_signal_rec[:, 6] > cut_val        
+        self.data_sig_mask = self.data_signal_rec[:, 6] > cut_val
+        
+        if self.use_weights:
+            weights = torch.tensor(np.load('weights/train_weights.npy')[:self.ndata])
+            self.data_gen_weights = weights.to(self.device)
+            self.sig_rec_weights = weights.to(self.device)
+        else:
+            self.data_gen_weights = torch.ones_like(self.data_gen[:,0]).to(self.device)
+            self.sig_rec_weights = torch.ones_like(self.data_gen[:,0]).to(self.device)
+
         #Remove events if both reco and gen do not pass the cuts
         mask = (self.data_gen_mask) | (self.data_sig_mask)
         self.data_gen_mask = self.data_gen_mask[mask]
         self.data_sig_mask = self.data_sig_mask[mask]
         self.data_gen = self.data_gen[mask]
         self.data_signal_rec = self.data_signal_rec[mask]
-
+        self.data_gen_weights = self.data_gen_weights[mask]
+        self.sig_rec_weights = self.sig_rec_weights[mask]
+        
         self.data_rec = torch.cat([self.data_signal_rec, self.data_bkg])
+        self.data_rec_weight = torch.cat([self.sig_rec_weights,
+                                          torch.ones_like(self.data_bkg[:,0]).to(self.device)])
         
 
         self.mc_gen_mask = self.mc_gen[:, 6] > cut_val
@@ -117,9 +132,6 @@ class Omnifold:
         if not reverse:
             # add noise to the jet multiplicity to smear out the integer structure
             dataset[:, 0] = (dataset[:, 0] + 1.e-3).log()
-            dataset[:, 6] = (dataset[:, 6] - 11.6).log()
-            # dataset[:, 0] = (dataset[:, 0] + 10).log()
-            # dataset[:, 6] = (dataset[:, 6] - 5).log()
             noise = torch.rand_like(dataset[:, 1]) - 0.5
             dataset[:, 1] = dataset[:, 1] + noise
             noise = torch.rand(size=dataset[:, 5].shape, device=dataset[:, 5].device)/1000. * 3 + 0.097
@@ -137,8 +149,11 @@ class Omnifold:
                 factor = max(dataset[:, 5].max(), -1 * dataset[:, 5].min())*1.001
             dataset[:, 5] = dataset[:, 5]/factor
             dataset[:, 5] = torch.erfinv(dataset[:, 5])
-            #dataset = dataset[:, self.params['channels']]
-            # standardize events
+
+            #Remove pT from the input list to match the standard omnifold
+
+            dataset = dataset[:,:6]
+
             try:
                 mean = parameters[0]
                 std = parameters[1]
@@ -155,9 +170,6 @@ class Omnifold:
             shift = parameters[2]
             factor = parameters[3]
             dataset = dataset.cpu() * std + mean
-            #zeros = torch.zeros((len(dataset), 7))
-            #zeros[:, self.params['channels']] = dataset
-            #dataset = zeros
             # round jet multiplicity back to integers
             dataset[..., 1] = torch.round(dataset[..., 1])
 
@@ -165,12 +177,6 @@ class Omnifold:
             dataset[..., 5] = dataset[..., 5].exp()
             dataset[..., 5] = torch.where(dataset[..., 5] < 0.1, 0, dataset[..., 5])
             dataset[..., 0] = (dataset[..., 0]).exp() - 1.e-3
-            dataset[..., 6] = (dataset[..., 6]).exp() + 11.6
-            # dataset[..., 0] = (dataset[..., 0]).exp() - 10
-            # dataset[..., 6] = (dataset[..., 6]).exp() + 5
-            # if hasattr(self, "unfolded"):
-            #     self.unfolded = self.unfolded * self.gen_std + self.gen_mean
-            #     self.unfolded[..., 1] = torch.round(self.unfolded[..., 1])
 
         return dataset, mean, std, shift, factor
 
@@ -207,10 +213,4 @@ class Omnifold:
             "bins": torch.linspace(0.0, 0.5, 50),
             "yscale": "log"
         })
-        self.observables.append({
-            "tex_label": r"\text{Jet transverse momentum }p_T",
-            "bins": torch.linspace(50, 500, 45 + 1),
-            "yscale": "log"
-        })
-
 

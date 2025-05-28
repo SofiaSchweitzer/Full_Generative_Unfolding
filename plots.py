@@ -56,10 +56,11 @@ def get_histograms_and_errors(bins, range, a, b, c, a_weights=None, b_weights=No
     
     
 def plot_naive_unfold(pp, gen, rec, unfolded, name, bins=60,
-               gen_weights=None, unfolded_weights=None, range=None, yscale="linear", unit=None, density=False):
+                      gen_weights=None, rec_weights = None,
+                      unfolded_weights=None, range=None, yscale="linear", unit=None, density=False):
 
     y_t, bins = np.histogram(gen, bins=bins, range=range, weights=gen_weights)
-    y_tr, _ = np.histogram(rec, bins=bins, weights=gen_weights)
+    y_tr, _ = np.histogram(rec, bins=bins, weights=rec_weights)
     y_g, _ = np.histogram(unfolded, bins=bins, weights = unfolded_weights)
 
     hists = [y_t, y_g, y_tr]

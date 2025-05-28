@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 from scipy.stats import binned_statistic
 
-from models import CFM, Flow
+from models import CFM
 from models import Classifier
 from omnifold_dataset import Omnifold
 import os
@@ -31,10 +31,6 @@ def sample_reco(data,efficiency_classifier, detector_model, gen_model,empty_val,
     gen_events = gen_model.evaluate(num_evts=num_gen,
                                     device=data.device,
                                     dtype=data.data_rec.dtype)
-
-    gen_mask = data.apply_cuts_preprocessed(gen_events)
-    logging.info(f"Accepting {gen_mask.sum()/gen_mask.shape[0]}")    
-    gen_events = gen_events[gen_mask.bool()]
     num_gen = gen_events.shape[0]
         
     efficiency = efficiency_classifier.evaluate(gen_events, return_weights=False)
@@ -159,8 +155,8 @@ def get_acceptance_model(args, data, classifier_params,logger):
     acceptance_classifier = Classifier(
         dims_in=data.data_rec.shape[1],
         params=classifier_params,
-        logger=logger,
         model_name="acceptance classifier",
+        logger=logger,
     )
     if args.train_acc:
         acceptance_true = data.mc_rec[
@@ -371,23 +367,21 @@ def get_bkg_model(args, data, generator_params,logger):
         data.device
     )
 
-
-    bkg_frac = 1.0 * data.data_bkg_mask.sum() / data.data_rec_mask.sum()
+    bkg_frac = 1.0 * data.data_bkg_mask.sum()/data.data_rec_weight[data.data_rec_mask].sum()
     logging.info(f"Background fraction is {bkg_frac}.")
 
     if args.train_bkg:
         bkg_mc = data.mc_bkg[data.mc_bkg_mask.bool()][:]
         data_rec = data.data_rec[data.data_rec_mask.bool()][:]
-        mc_bkg_frac = 1.0 * data.mc_bkg_mask.sum() / data.data_rec_mask.sum()
+        mc_bkg_frac = 1.0 * data.mc_bkg_mask.sum() / data.data_rec_weight[data.data_rec_mask].sum()
         weights = torch.cat(
             [
-                torch.ones_like(data_rec[:, 0]),
+                data.data_rec_weight[data.data_rec_mask.bool()],
                 -bkg_frac / mc_bkg_frac * torch.ones_like(bkg_mc[:, 0]),
             ],
             0,
         )
         data_rec = torch.cat([data_rec, bkg_mc], 0)
-
         signal_generator.train(data_rec, weights=weights)
         torch.save(
             signal_generator.network.state_dict(),
@@ -411,7 +405,8 @@ def main(args=None):
     setup_logging(args.model_path)
     logger = SummaryWriter(args.model_path)
 
-    data = Omnifold(args.path, args.nmc, args.ndata, args.nbkg, args.empty_val)
+    data = Omnifold(args.path, args.nmc, args.ndata, args.nbkg, args.empty_val,
+                    use_weights=args.reweighted)
     logging.info(
         f"Loaded mc data with shape {data.mc_rec.shape}, pseudo data with shape {data.data_rec.shape} and background data"
         f"with shape {data.mc_bkg.shape}"
@@ -427,22 +422,22 @@ def main(args=None):
     logging.info(f"Using device:{data.device}")
 
     generator_params = {
-        "hidden_layers": 4,
+        "hidden_layers": 3,
         "internal_size": 128,
         "lr": 5e-5,
-        "n_epochs": 200,
-        "batch_size": 256,
+        "n_epochs": 500,
+        "batch_size": 128,
         "batch_size_sample": 2000,
     }
     
     signal_generator = get_bkg_model(args, data, generator_params, logger)
-    bkg_frac = 1.0 * data.data_bkg_mask.sum() / data.data_rec_mask.sum()
+    bkg_frac = 1.0 * data.data_bkg_mask.sum() / data.data_rec_weight[data.data_rec_mask].sum()
 
     classifier_params = {
         "hidden_layers": 4,
         "internal_size": 64,
         "lr": 1e-4,
-        "n_epochs": 50,
+        "n_epochs": 30,
         "batch_size": 128,
         "batch_size_sample": 2000,
     }
@@ -533,13 +528,15 @@ def main(args=None):
             f"{args.model_path}/gen_generator_{i}.pt",
         )
 
-        
+
+        print(data.data_gen_weights[data.data_gen_mask.bool()].cpu().detach().numpy().shape,data.revert(data.data_gen[data.data_gen_mask.bool()])[:, 0].shape)
         with PdfPages(f"{args.plot_path}/final_unfolding_{i}.pdf") as out:
             for j, observable in enumerate(data.observables):
                 plot_naive_unfold(out,
                                   data.revert(data.data_gen[data.data_gen_mask.bool()])[:, j],
                                   data.revert(data.data_rec[(data.data_rec_mask.bool())])[:, j],
                                   data.revert(unfolded[acceptance_mask.bool()])[:, j],
+                                  gen_weights = data.data_gen_weights[data.data_gen_mask.bool()].cpu().detach().numpy(),
                                   bins=observable["bins"],
                                   name=observable["tex_label"],
                                   yscale=observable["yscale"])
@@ -606,8 +603,16 @@ if __name__ == "__main__":
         "--start", default=0, type=int, help="Iteration to start from"
     )
     parser.add_argument(
-        "--empty_val", default=-1.0, type=float, help="Default values for empty entries"
+        "--empty_val", default=-5.0, type=float, help="Default values for empty entries"
     )
+
+    parser.add_argument(
+        "--reweighted",
+        action="store_true",
+        default=False,
+        help="Use reweighted pythia instead of herwig as data",
+    )
+    
     parser.add_argument(
         "--train_bkg",
         action="store_true",
