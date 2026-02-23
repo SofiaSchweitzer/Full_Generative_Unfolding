@@ -3,7 +3,7 @@ import argparse
 import yaml
 import torch
 import os
-
+import numpy as np
 
 import logging
 from torch.utils.tensorboard import SummaryWriter
@@ -37,7 +37,7 @@ def setup_logging(run_dir):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('path')
-    train  = False
+    train  = True
 
     args = parser.parse_args()
 
@@ -166,7 +166,7 @@ def main():
                 iterative_classifier.train_classifier_with_validation(train_data_unfold, mc_gen, train_data_weights, mc_weights)
                 mc_weights *= iterative_classifier.evaluate(mc_gen)
                 test_mc_weights *= iterative_classifier.evaluate(test_data.mc_gen[test_data.mc_rec_mask.bool() &(test_data.mc_gen_mask.bool())])
-
+                np.save(f"{run_dir}/{j}th_mc_weight.npy", test_mc_weights.cpu())
                 #plot histograms
                 plt.figure()
                 plt.hist(mc_weights.cpu(), bins=50, label='data_rec')
@@ -199,6 +199,7 @@ def main():
                                                                                          test_data.std,
                                                                                          test_data.shift,
                                                                                          test_data.factor], reverse=True)
+                np.save(f"{run_dir}/{j}th_unfolded.npy", data_unfold_inter)
                 mc_rec_inter, _, _, _, _ = test_data.apply_preprocessing(test_data.mc_rec.clone(),
                                                                          parameters=[test_data.mean, test_data.std, test_data.shift,
                                                                                      test_data.factor], reverse=True)
@@ -339,8 +340,8 @@ def main():
     # np.save(f"{run_dir}/unfolded.npy", data_unfold_inter[unfolded_mask])
     # np.save(f"{run_dir}/weights.npy", data_weights.cpu()[unfolded_mask])
 
-    # np.save(f"{run_dir}/unfolded.npy", data_unfold_inter)
-    # np.save(f"{run_dir}/weights.npy", data_weights.cpu())
+    np.save(f"{run_dir}/final_unfolded.npy", data_unfold_inter)
+    np.save(f"{run_dir}/weights.npy", data_weights.cpu())
 
     # %%
     with PdfPages(f"{plot_path}/background_suppression.pdf") as out:
@@ -360,7 +361,8 @@ def main():
                                          labels=[r"$p_{d,s}(x)_r$", r"$\nu \cdot p_{d,s+b}(x)_r$",
                                                  r"$p_{d,s+b}(x)_r$"],
                                          name=test_data.observables[channel]["tex_label"],
-                                         yscale=test_data.observables[channel]["yscale"])
+                                         yscale=test_data.observables[channel]["yscale"],
+                                         leg_pos=test_data.observables[channel]["leg_pos"])
 
     with PdfPages(f"{plot_path}/acceptance_effects.pdf") as out:
         for channel in params["channels"]:
@@ -381,7 +383,8 @@ def main():
                                          labels=[r"$p_{d,s}(x)_{r,g}$", r"$\delta \cdot \nu \cdot p_{d,s+b}(x)_r$",
                                                  "$p_{d,s}(x)_r$"],
                                          name=test_data.observables[channel]["tex_label"],
-                                         yscale=test_data.observables[channel]["yscale"])
+                                         yscale=test_data.observables[channel]["yscale"],
+                                         leg_pos=test_data.observables[channel]["leg_pos"])
 
     with PdfPages(f"{plot_path}/prior_dependence_final.pdf") as out:
         for channel in params["channels"]:
@@ -398,7 +401,8 @@ def main():
                               prior_weights=torch.ones_like(test_data.mc_gen[:, channel][(test_data.mc_rec_mask.bool())
                                                             & (test_data.mc_gen_mask.bool())]),
                               bins=test_data.observables[channel]["bins"], name=test_data.observables[channel]["tex_label"],
-                              yscale=test_data.observables[channel]["yscale"])
+                              yscale=test_data.observables[channel]["yscale"],
+                              leg_pos=test_data.observables[channel]["leg_pos"])
 
     with PdfPages(f"{plot_path}/efficiency_acceptance_effects.pdf") as out:
         for channel in params["channels"]:
@@ -412,7 +416,8 @@ def main():
                                          bins=test_data.observables[channel]["bins"],
                                          labels=[r"$p_{d,s}(y)_g$", r"$\text{unfolded} / \epsilon$", "unfolded"],
                                          name=test_data.observables[channel]["tex_label"],
-                                         yscale=test_data.observables[channel]["yscale"])
+                                         yscale=test_data.observables[channel]["yscale"],
+                                         leg_pos=test_data.observables[channel]["leg_pos"])
 
     with PdfPages(f"{plot_path}/final_unfolding.pdf") as out:
         for channel in params["channels"]:
@@ -425,7 +430,8 @@ def main():
                               bins=test_data.observables[channel]["bins"],
                               name=test_data.observables[channel]["tex_label"],
                               yscale=test_data.observables[channel]["yscale"],
-                              includes="acceptance")
+                              includes="acceptance",
+                              leg_pos=test_data.observables[channel]["leg_pos"])
             d = calculate_triangle_distance(feed_dict=
                                         {"truth": test_data.data_gen[:, channel][test_data.data_gen_mask.bool()],
                                          "unfolded": data_unfold_inter[:, channel]},#[unfolded_mask]},

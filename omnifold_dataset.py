@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-import h5py
+# import h5py
 
 
 class Omnifold:
@@ -66,6 +66,7 @@ class Omnifold:
                                                                                     self.factor])
 
         self.data_gen_weights = np.load(f"{path}/{self.dataset_type}_weights_6d.npy")
+        # self.data_gen_weights = torch.ones_like(self.data_gen[:, 0])
         self.data_gen_weights = torch.tensor(self.data_gen_weights).float().to(self.device)
 
         self.data_rec_weights = torch.cat([self.data_gen_weights, torch.ones_like(self.data_bkg[:,0]).to(self.device)])
@@ -138,39 +139,46 @@ class Omnifold:
         self.observables = []
 
         self.observables.append({
-            "tex_label": r"\text{Jet mass } m",
-            "bins": torch.linspace(1, 90, 40 + 1),
-            "yscale": "linear"
+            "tex_label": r"\text{Jet mass } m \;[\text{GeV}]",
+            "bins": torch.linspace(1, 60, 40 + 1),
+            "yscale": "linear",
+            "leg_pos": "upper right"
         })
         self.observables.append({
             "tex_label": r"\text{Jet multiplicity } N",
-            "bins": torch.arange(3.5, 60.5),
-            "yscale": "linear"
+            "bins": torch.arange(3.5, 60.5, 2),
+            "yscale": "linear",
+            "leg_pos": "upper right"
         })
         self.observables.append({
             "tex_label": r"\text{Jet width } w",
-            "bins": torch.linspace(0, 0.7, 40 + 1),
-            "yscale": "log"
+            "bins": torch.linspace(0, 0.6, 40 + 1),
+            "yscale": "log",
+            "leg_pos": "lower center"
         })
         self.observables.append({
             "tex_label": r"\text{Groomed mass }\log \rho",
-            "bins": torch.linspace(-13, -0.5, 40 + 1),
-            "yscale": "linear"
+            "bins": torch.linspace(-13, -1.5, 40 + 1),
+            "yscale": "linear",
+            "leg_pos": "lower center"
         })
         self.observables.append({
             "tex_label": r"\text{N-subjettiness ratio } \tau_{21}",
-            "bins": torch.linspace(0.1, 1.3, 40 + 1),
-            "yscale": "linear"
+            "bins": torch.linspace(0.2, 1.3, 40 + 1),
+            "yscale": "linear",
+            "leg_pos": "lower center"
         })
         self.observables.append({
             "tex_label": r"\text{Groomed momentum fraction }z_g",
-            "bins": torch.linspace(0.05, 0.55, 40 + 1),
-            "yscale": "log"
+            "bins": torch.linspace(0.05, 0.55, 45 + 1),
+            "yscale": "log",
+            "leg_pos": "upper right"
         })
         self.observables.append({
             "tex_label": r"\text{Jet transverse momentum }p_T",
             "bins": torch.linspace(50, 500, 40+ 1),
-            "yscale": "log"
+            "yscale": "log",
+            "leg_pos": "upper right"
         })
 
 
