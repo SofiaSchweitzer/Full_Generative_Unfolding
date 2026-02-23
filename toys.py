@@ -103,6 +103,7 @@ def main():
     background_weights_test = background_weights_test * len(
         test_data.mc_rec[test_data.mc_rec_mask.bool()]) / background_weights_test.sum()
 
+    np.save(f"{run_dir}/bkg_weights.npy", background_weights_test.cpu().numpy())
     if params["include_learned_acceptance"]:
         acceptance_true = train_data.mc_rec[(train_data.mc_rec_mask.bool()) & (train_data.mc_gen_mask.bool())]
         acceptance_false = train_data.mc_rec[(train_data.mc_rec_mask.bool()) & ~(train_data.mc_gen_mask.bool())]
@@ -114,6 +115,11 @@ def main():
         acceptance_test = acceptance_classifier.evaluate(test_data.data_rec[test_data.data_rec_mask.bool()], return_weights=False)
         train_mc_gen_mask = train_data.mc_gen_mask
         test_mc_gen_mask = test_data.mc_gen_mask
+
+        acceptance_path = os.path.join(run_dir, "models", f"acceptance.pt")
+        torch.save(acceptance_classifier.state_dict(), acceptance_path)
+
+        np.save(f"{run_dir}/acceptance_weights.npy", acceptance_test.cpu().numpy())
 
         train_data_gen_mask = train_data.data_gen_mask
         test_data_gen_mask =test_data.data_gen_mask
@@ -181,8 +187,11 @@ def main():
 
         unfolder.train_unfolder(mc_gen, mc_rec, mc_weights_train)
         print("unfold data")
+        unfolder_path = os.path.join(run_dir, "models", f"{i}th_unfolder.pt")
+        torch.save(unfolder.state_dict(), unfolder_path)
         data_unfold_train = unfolder.evaluate(train_data.data_rec[train_data.data_rec_mask.bool()])
         data_unfold_test = unfolder.evaluate(test_data.data_rec[test_data.data_rec_mask.bool()])
+
         with PdfPages(f"{plot_path}/prior_dependence_{i}.pdf") as out:
             plot_prior_unfold(out, test_data.data_gen.cpu()[:, 0][
                     (test_data.data_rec_mask[:len(test_data.data_signal_rec)].bool()) & (test_data_gen_mask.bool())],
@@ -213,6 +222,8 @@ def main():
     torch.save(efficiency_classifier.state_dict(), efficiency_path)
 
     efficiency_test = efficiency_classifier.evaluate(data_unfold_test, return_weights=False)
+
+    np.save(f"{run_dir}/efficiency.npy", efficiency_test.cpu().numpy())
 
     data_weights =acceptance_test *background_weights_test / efficiency_test
     data_weights = data_weights.clip(0, 10)
